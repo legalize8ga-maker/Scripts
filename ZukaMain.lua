@@ -2597,6 +2597,140 @@ function Modules.FlingProtection:_enforceStability()
         end
     end
 end
+
+do
+	local ATTRIBUTE_OG_SIZE = "Callum_OriginalSize"
+	local SELECTION_BOX_NAME = "Callum_ReachSelectionBox"
+
+	local activeTool: Tool? = nil
+	local modifiedPart: BasePart? = nil
+	local persistentToolName: string? = nil
+	local persistentPartName: string? = nil
+	local currentReachSize: number = 20
+	local currentReachType: "directional" | "box" = "directional"
+	
+	Modules.ReachController = {
+		State = {
+			IsEnabled = false,
+			UI = nil,
+			Connections = {}
+		}
+	}
+	
+	local function updatePartModification(part: BasePart, newSize: number?, reachType: string?)
+		if not part or not part.Parent then return end
+		local originalSize = part:GetAttribute(ATTRIBUTE_OG_SIZE)
+		if not newSize then
+			if originalSize then part.Size = originalSize; part:SetAttribute(ATTRIBUTE_OG_SIZE, nil) end
+			local selectionBox = part:FindFirstChild(SELECTION_BOX_NAME)
+			if selectionBox then selectionBox:Destroy() end
+			return
+		end
+		if not originalSize then part:SetAttribute(ATTRIBUTE_OG_SIZE, part.Size) end
+		local selectionBox = part:FindFirstChild(SELECTION_BOX_NAME) or Instance.new("SelectionBox")
+		selectionBox.Name = SELECTION_BOX_NAME; selectionBox.Adornee = part; selectionBox.LineThickness = 0.02; selectionBox.Parent = part
+		selectionBox.Color3 = reachType == "box" and Color3.fromRGB(0, 100, 255) or Color3.fromRGB(255, 0, 0)
+		if reachType == "box" then part.Size = Vector3.one * newSize else part.Size = Vector3.new(part.Size.X, part.Size.Y, newSize) end
+		part.Massless = true
+	end
+
+	local function resetReach()
+		if not modifiedPart and not persistentToolName then print("Reach is not active."); return end
+		local tool; if persistentToolName then tool = (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(persistentToolName)) or (LocalPlayer.Backpack and LocalPlayer.Backpack:FindFirstChild(persistentToolName)) end
+		local partToReset = modifiedPart or (tool and persistentPartName and tool:FindFirstChild(persistentPartName, true))
+		if partToReset then updatePartModification(partToReset, nil, nil) end
+		modifiedPart, persistentToolName, persistentPartName = nil, nil, nil
+		print("Tool reach has been fully reset.")
+	end
+
+	function Modules.ReachController:Enable()
+		if self.State.IsEnabled then return end
+		self.State.IsEnabled = true
+		
+		local ui = Instance.new("ScreenGui"); ui.Name = "ReachController_Callum"; ui.ZIndexBehavior = Enum.ZIndexBehavior.Global; ui.ResetOnSpawn = false
+		self.State.UI = ui
+		
+		local mainFrame = Instance.new("Frame", ui); mainFrame.Size = UDim2.fromOffset(250, 320); mainFrame.Position = UDim2.fromScale(0, 0); mainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 45); mainFrame.BorderSizePixel = 0; mainFrame.ClipsDescendants = true
+		Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8); Instance.new("UIStroke", mainFrame).Color = Color3.fromRGB(80, 80, 100)
+		
+		local titleBar = Instance.new("Frame", mainFrame); titleBar.Name = "TitleBar"; titleBar.Size = UDim2.new(1, 0, 0, 30); titleBar.BackgroundColor3 = Color3.fromRGB(25, 25, 35); titleBar.BorderSizePixel = 0
+		local title = Instance.new("TextLabel", titleBar); title.Size = UDim2.new(1, -30, 1, 0); title.Position = UDim2.fromOffset(10, 0); title.BackgroundTransparency = 1; title.Font = Enum.Font.GothamSemibold; title.Text = "Reach Controller"; title.TextColor3 = Color3.fromRGB(200, 220, 255); title.TextSize = 16; title.TextXAlignment = Enum.TextXAlignment.Left
+		local contentFrame = Instance.new("Frame", mainFrame); contentFrame.Name = "Content"; contentFrame.Size = UDim2.new(1, 0, 1, -30); contentFrame.Position = UDim2.new(0, 0, 0, 30); contentFrame.BackgroundTransparency = 1
+		local toggleButton = Instance.new("TextButton", titleBar); toggleButton.Size = UDim2.fromOffset(20, 20); toggleButton.Position = UDim2.new(1, -10, 0.5, 0); toggleButton.AnchorPoint = Vector2.new(1, 0.5); toggleButton.BackgroundColor3 = Color3.fromRGB(80, 80, 100); toggleButton.Text = "-"; toggleButton.Font = Enum.Font.GothamBold; toggleButton.TextColor3 = Color3.new(1, 1, 1); Instance.new("UICorner", toggleButton).CornerRadius = UDim.new(0, 4)
+
+		titleBar.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then local dragStart, startPos = input.Position, mainFrame.Position; local moveConn, endConn; moveConn = UserInputService.InputChanged:Connect(function(moveInput) if moveInput.UserInputType == Enum.UserInputType.MouseMovement then local delta = moveInput.Position - dragStart; mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y) end end); endConn = UserInputService.InputEnded:Connect(function(endInput) if endInput.UserInputType == Enum.UserInputType.MouseButton1 then moveConn:Disconnect(); endConn:Disconnect() end end) end end)
+		local sizeLabel = Instance.new("TextLabel", contentFrame); sizeLabel.Size = UDim2.fromOffset(80, 20); sizeLabel.Position = UDim2.fromOffset(10, 10); sizeLabel.BackgroundTransparency = 1; sizeLabel.Font = Enum.Font.Gotham; sizeLabel.Text = "Reach Size:"; sizeLabel.TextColor3 = Color3.new(1, 1, 1); sizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+		local sizeInput = Instance.new("TextBox", contentFrame); sizeInput.Size = UDim2.fromOffset(130, 30); sizeInput.Position = UDim2.fromOffset(110, 5); sizeInput.BackgroundColor3 = Color3.fromRGB(50, 50, 65); sizeInput.Font = Enum.Font.Code; sizeInput.Text = tostring(currentReachSize); sizeInput.TextColor3 = Color3.new(1, 1, 1); Instance.new("UICorner", sizeInput).CornerRadius = UDim.new(0, 4)
+		local directionalBtn = Instance.new("TextButton", contentFrame); directionalBtn.Size = UDim2.fromOffset(110, 30); directionalBtn.Position = UDim2.fromOffset(10, 40); directionalBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 100); directionalBtn.Font = Enum.Font.GothamSemibold; directionalBtn.Text = "Directional"; directionalBtn.TextColor3 = Color3.new(1, 1, 1); Instance.new("UICorner", directionalBtn).CornerRadius = UDim.new(0, 4)
+		local boxBtn = Instance.new("TextButton", contentFrame); boxBtn.Size = UDim2.fromOffset(110, 30); boxBtn.Position = UDim2.fromOffset(130, 40); boxBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 65); boxBtn.Font = Enum.Font.GothamSemibold; boxBtn.Text = "Box"; boxBtn.TextColor3 = Color3.new(1, 1, 1); Instance.new("UICorner", boxBtn).CornerRadius = UDim.new(0, 4)
+		local partsLabel = Instance.new("TextLabel", contentFrame); partsLabel.Size = UDim2.fromOffset(80, 20); partsLabel.Position = UDim2.fromOffset(10, 75); partsLabel.BackgroundTransparency = 1; partsLabel.Font = Enum.Font.Gotham; partsLabel.Text = "Tool Parts:"; partsLabel.TextColor3 = Color3.new(1, 1, 1); partsLabel.TextXAlignment = Enum.TextXAlignment.Left
+		local scroll = Instance.new("ScrollingFrame", contentFrame); scroll.Size = UDim2.new(1, -20, 1, -140); scroll.Position = UDim2.fromOffset(10, 100); scroll.BackgroundColor3 = Color3.fromRGB(25, 25, 35); scroll.BorderSizePixel = 0; scroll.ScrollBarThickness = 6
+		local resetBtn = Instance.new("TextButton", contentFrame); resetBtn.Size = UDim2.new(1, -20, 0, 30); resetBtn.Position = UDim2.new(0.5, 0, 1, -10); resetBtn.AnchorPoint = Vector2.new(0.5, 1); resetBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50); resetBtn.Font = Enum.Font.GothamBold; resetBtn.Text = "Reset Reach"; resetBtn.TextColor3 = Color3.new(1, 1, 1); Instance.new("UICorner", resetBtn).CornerRadius = UDim.new(0, 4)
+
+		local function populatePartSelector()
+			scroll:ClearAllChildren(); if not activeTool then return end
+			local parts = {}; for _, d in ipairs(activeTool:GetDescendants()) do if d:IsA("BasePart") then table.insert(parts, d) end end
+			if #parts == 0 then return end
+			local listLayout = Instance.new("UIListLayout", scroll); listLayout.Padding = UDim.new(0, 5); listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			for _, part in ipairs(parts) do
+				local btn = Instance.new("TextButton", scroll); btn.Size = UDim2.new(1, -10, 0, 30); btn.Position = UDim2.fromScale(0.5, 0); btn.AnchorPoint = Vector2.new(0.5, 0); btn.BackgroundColor3 = Color3.fromRGB(50, 50, 65); btn.TextColor3 = Color3.fromRGB(220, 220, 230); btn.Font = Enum.Font.Code; btn.Text = part.Name; btn.TextSize = 14; Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+				btn.MouseButton1Click:Connect(function()
+					if not part or not part.Parent or not activeTool then print("Reach Error: Part/tool missing."); return end
+					persistentToolName, persistentPartName = activeTool.Name, part.Name
+					if modifiedPart and modifiedPart ~= part then updatePartModification(modifiedPart, nil, nil) end
+					modifiedPart = part; updatePartModification(part, currentReachSize, currentReachType)
+					print(string.format("Reach set for '%s' on tool '%s'.", part.Name, activeTool.Name))
+				end)
+			end
+		end
+
+		sizeInput.FocusLost:Connect(function() local num = tonumber(sizeInput.Text); if num and num > 0 then currentReachSize = num else sizeInput.Text = tostring(currentReachSize) end end)
+		directionalBtn.MouseButton1Click:Connect(function() currentReachType = "directional"; directionalBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 100); boxBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 65) end)
+		boxBtn.MouseButton1Click:Connect(function() currentReachType = "box"; boxBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 100); directionalBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 65) end)
+		resetBtn.MouseButton1Click:Connect(resetReach)
+		toggleButton.MouseButton1Click:Connect(function() contentFrame.Visible = not contentFrame.Visible; toggleButton.Text = contentFrame.Visible and "-" or "+"; mainFrame.Size = contentFrame.Visible and UDim2.fromOffset(250, 320) or UDim2.fromOffset(250, 30) end)
+
+		local function onToolEquipped(tool)
+			activeTool = tool; populatePartSelector()
+			if self.State.Connections.Unequipped then self.State.Connections.Unequipped:Disconnect() end
+			self.State.Connections.Unequipped = tool.Unequipped:Connect(function() activeTool = nil; populatePartSelector() end)
+		end
+
+		local function onCharacterAdded(character)
+			if persistentToolName and persistentPartName then
+				local function reapply(tool) if tool and tool.Name == persistentToolName then local part = tool:WaitForChild(persistentPartName, 2); if part and part:IsA("BasePart") then updatePartModification(part, currentReachSize, currentReachType); modifiedPart = part end end end
+				reapply(character:FindFirstChild(persistentToolName)); self.State.Connections["Reapply"..character.Name] = character.ChildAdded:Connect(function(child) if child:IsA("Tool") then reapply(child) end end)
+			end
+			self.State.Connections["ToolListener"..character.Name] = character.ChildAdded:Connect(function(child) if child:IsA("Tool") then onToolEquipped(child) end end)
+			local firstTool = character:FindFirstChildOfClass("Tool"); if firstTool then onToolEquipped(firstTool) end
+		end
+
+		if LocalPlayer.Character then onCharacterAdded(LocalPlayer.Character) end
+		self.State.Connections.CharacterAdded = LocalPlayer.CharacterAdded:Connect(onCharacterAdded)
+
+		ui.Parent = CoreGui
+		DoNotif("Reach Controller: ENABLED.", 2)
+	end
+	
+	function Modules.ReachController:Disable()
+		if not self.State.IsEnabled then return end
+		self.State.IsEnabled = false
+		resetReach()
+		if self.State.UI and self.State.UI.Parent then self.State.UI:Destroy() end
+		self.State.UI = nil
+		for _, conn in pairs(self.State.Connections) do conn:Disconnect() end
+		table.clear(self.State.Connections)
+		DoNotif("Reach Controller: DISABLED.", 2)
+	end
+
+	function Modules.ReachController:Toggle()
+		if self.State.IsEnabled then self:Disable() else self:Enable() end
+	end
+end
+
+RegisterCommand({ Name = "reachgui", Aliases = { "reachcontroller" }, Description = "Toggles a GUI for advanced tool reach modification." }, function() Modules.ReachController:Toggle() end)
+
+
 RegisterCommand({
 Name = "antifling",
 Aliases = {"nofling", "anf"},
@@ -3496,6 +3630,23 @@ Modules.Airwalk = {
     }
 }
 
+--- [NEW HELPER FUNCTION] Calculates the total mass of a character model.
+-- @param character The character model to measure.
+-- @return The total mass of all BaseParts within the model.
+function Modules.Airwalk:_getCharacterTotalMass(character)
+    local totalMass = 0
+    if not character then return totalMass end
+
+    -- Iterate through all descendants to find parts with mass
+    for _, descendant in ipairs(character:GetDescendants()) do
+        if descendant:IsA("BasePart") then
+            totalMass = totalMass + descendant.Mass
+        end
+    end
+    return totalMass
+end
+
+--- Enables the airwalk effect.
 function Modules.Airwalk:Enable()
     if self.State.IsEnabled then return end
     self.State.IsEnabled = true
@@ -3505,7 +3656,7 @@ function Modules.Airwalk:Enable()
         local hrp = character:WaitForChild("HumanoidRootPart", 2)
         if not hrp then return end
 
-        -- Clean up any old force before applying a new one
+        -- Clean up any old force instances before applying a new one
         if hrp:FindFirstChild("AirwalkForce") then
              hrp.AirwalkForce:Destroy()
         end
@@ -3522,9 +3673,10 @@ function Modules.Airwalk:Enable()
         force.Attachment0 = attachment
         force.RelativeTo = Enum.ActuatorRelativeTo.World
         
-        -- Dynamically calculate the force needed to counteract gravity
-        local characterMass = character:GetMass()
-        force.Force = Vector3.new(0, characterMass * Workspace.Gravity, 0)
+        -- [FIX] Correctly calculate total character mass and apply counter-gravity force.
+        local characterMass = Modules.Airwalk:_getCharacterTotalMass(character)
+        local gravity = game:GetService("Workspace").Gravity
+        force.Force = Vector3.new(0, characterMass * gravity, 0)
         force.Parent = hrp
         
         self.State.ActiveForce = force
@@ -3536,27 +3688,30 @@ function Modules.Airwalk:Enable()
 
     self.State.CharacterConnections.Added = LocalPlayer.CharacterAdded:Connect(applyAirwalk)
     self.State.CharacterConnections.Removing = LocalPlayer.CharacterRemoving:Connect(function()
-        self.State.ActiveForce = nil -- Clear reference on death
+        self.State.ActiveForce = nil -- Clear reference on death to prevent memory leaks
     end)
     DoNotif("Airwalk: ENABLED.", 2)
 end
 
+--- Disables the airwalk effect and cleans up all resources.
 function Modules.Airwalk:Disable()
     if not self.State.IsEnabled then return end
     self.State.IsEnabled = false
 
+    -- Destroy the active VectorForce if it exists
     if self.State.ActiveForce and self.State.ActiveForce.Parent then
         self.State.ActiveForce:Destroy()
     end
     self.State.ActiveForce = nil
 
-    -- Also remove from character if it exists but the reference was lost
+    -- Failsafe: Also remove from the current character if the reference was lost
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
         local hrp = LocalPlayer.Character.HumanoidRootPart
         if hrp:FindFirstChild("AirwalkForce") then hrp.AirwalkForce:Destroy() end
         if hrp:FindFirstChild("AirwalkAttachment") then hrp.AirwalkAttachment:Destroy() end
     end
     
+    -- Critically, disconnect all event connections to prevent memory leaks
     for _, connection in pairs(self.State.CharacterConnections) do
         connection:Disconnect()
     end
@@ -3565,6 +3720,7 @@ function Modules.Airwalk:Disable()
     DoNotif("Airwalk: DISABLED.", 2)
 end
 
+--- Toggles the airwalk state.
 function Modules.Airwalk:Toggle()
     if self.State.IsEnabled then
         self:Disable()
@@ -3573,6 +3729,91 @@ function Modules.Airwalk:Toggle()
     end
 end
 RegisterCommand({ Name = "airwalk", Aliases = { "awalk" }, Description = "Toggles the ability to walk on air." }, function() Modules.Airwalk:Toggle() end)
+
+Modules.AntiVoid = {
+    State = {
+        IsEnabled = false,
+        Connection = nil
+    },
+    Config = {
+        -- How many studs above the void kill-height to trigger the teleport.
+        -- A higher value is safer but might trigger on maps with very low areas.
+        SafetyBuffer = 15 
+    }
+}
+
+--- Finds a safe spawn point, with a fallback to a default coordinate.
+-- @return CFrame - The CFrame of a safe location to teleport to.
+function Modules.AntiVoid:_getSafeSpawnPoint()
+    local spawnLocations = {}
+    -- Search the entire workspace for any available SpawnLocation
+    for _, descendant in ipairs(game:GetService("Workspace"):GetDescendants()) do
+        if descendant:IsA("SpawnLocation") then
+            table.insert(spawnLocations, descendant)
+        end
+    end
+
+    if #spawnLocations > 0 then
+        -- Return the CFrame of the first valid spawn found, with a vertical offset.
+        return spawnLocations[1].CFrame * CFrame.new(0, 3, 0)
+    else
+        -- Fallback in case no SpawnLocation objects exist in the game.
+        return CFrame.new(0, 50, 0)
+    end
+end
+
+--- Enables the anti-void check.
+function Modules.AntiVoid:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+
+    -- Bind the check to Heartbeat, which runs after every physics step.
+    self.State.Connection = RunService.Heartbeat:Connect(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        local voidLevel = Workspace.FallenPartsDestroyHeight
+        
+        -- Check if the player has fallen below the trigger height
+        if hrp.Position.Y < (voidLevel + self.Config.SafetyBuffer) then
+            local safeCFrame = self:_getSafeSpawnPoint()
+            
+            -- Teleport the character and reset their velocity to stabilize them.
+            hrp.CFrame = safeCFrame
+            hrp.Velocity = Vector3.zero
+            hrp.RotVelocity = Vector3.zero
+        end
+    end)
+
+    DoNotif("Anti-Void: ENABLED.", 2)
+end
+
+--- Disables the anti-void check and cleans up connections.
+function Modules.AntiVoid:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+
+    -- Disconnect the Heartbeat connection to prevent resource leaks.
+    if self.State.Connection then
+        self.State.Connection:Disconnect()
+        self.State.Connection = nil
+    end
+
+    DoNotif("Anti-Void: DISABLED.", 2)
+end
+
+--- Toggles the anti-void state.
+function Modules.AntiVoid:Toggle()
+    if self.State.IsEnabled then
+        self:Disable()
+    else
+        self:Enable()
+    end
+end
+RegisterCommand({ Name = "antivoid", Aliases = { "novoid" }, Description = "Toggles an anti-void system that teleports you to spawn before you die." }, function() Modules.AntiVoid:Toggle() end)
 
 Modules.AstralHead = {
 State = {
@@ -4860,7 +5101,6 @@ RegisterCommand({Name = "desync", Aliases = {"invis", "astral"}, Description = "
 RegisterCommand({Name = "zgui", Aliases = {"upd3", "zui"}, Description = "For Zombie Game upd3"}, function() loadstringCmd("https://raw.githubusercontent.com/zukatechdevelopment-ux/luaprojectse3/refs/heads/main/ZGUI.txt", "Loaded GUI") end)
 RegisterCommand({Name = "swordbot", Aliases = {"sf", "sfbot"}, Description = "Auto Sword Fighter, use E and R"}, function() loadstringCmd("https://raw.githubusercontent.com/bloxtech1/luaprojects2/refs/heads/main/swordnpc", "Bot loaded.") end)
 RegisterCommand({Name = "reload", Aliases = {"update", "exec"}, Description = "Reloads and re-executes the admin script from the GitHub source."}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/Main.lua", "Reloading admin from source...") end)
-RegisterCommand({Name = "reachmenu", Aliases = {"reachgui", "meleer"}, Description = "Similar to the default reach command  this is a standalone gui."}, function() loadstringCmd("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/ZukasReachGui.lua", "Reach UI") end)
 RegisterCommand({Name = "zoneui", Aliases = {"guns"}, Description = "Loads the Best Gun Giver for Zombie Zone" }, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/ZombieZone.lua", "Loaded") end)
 RegisterCommand({Name = "ibtools", Aliases = {"btools"}, Description = "Upgraded Gui For Btools"}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/IBtools.txt", "Loading Revamped Btools Gui") end)
 RegisterCommand({Name = "ketamine", Aliases = {"kspy"}, Description = "Warning: may crash on xeno"}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/remotes.lua", "Loading SimpleSpy...") end)
