@@ -1158,6 +1158,62 @@ RegisterCommand({ Name = "fpsboost", Aliases = { "noshadows", "performance" }, D
 end)
 
 
+Modules.AnchorSelf = {
+    State = {
+        IsEnabled = false,
+        CharacterAddedConnection = nil
+    }
+}
+
+function Modules.AnchorSelf:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+
+    local function applyAnchor(character)
+        if not character then return end
+        local hrp = character:WaitForChild("HumanoidRootPart", 2)
+        if hrp then
+            hrp.Anchored = true
+        end
+    end
+
+    if LocalPlayer.Character then
+        applyAnchor(LocalPlayer.Character)
+    end
+
+    self.State.CharacterAddedConnection = LocalPlayer.CharacterAdded:Connect(applyAnchor)
+    DoNotif("Self Anchor: ENABLED.", 2)
+end
+
+function Modules.AnchorSelf:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+
+    if LocalPlayer.Character then
+        local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.Anchored = false
+        end
+    end
+
+    if self.State.CharacterAddedConnection then
+        self.State.CharacterAddedConnection:Disconnect()
+        self.State.CharacterAddedConnection = nil
+    end
+    DoNotif("Self Anchor: DISABLED.", 2)
+end
+
+function Modules.AnchorSelf:Toggle()
+    if self.State.IsEnabled then
+        self:Disable()
+    else
+        self:Enable()
+    end
+end
+RegisterCommand({ Name = "anchor", Aliases = { "lock", "lockpos" }, Description = "Toggles anchoring your character in place." }, function()
+    Modules.AnchorSelf:Toggle()
+end)
+
 Modules.AutoComplete = {};
 function Modules.AutoComplete:GetMatches(prefix)
     local matches = {}
@@ -3431,6 +3487,93 @@ function Modules.ScriptHunter:Initialize()
         module:Execute(args)
     end)
 end
+
+Modules.Airwalk = {
+    State = {
+        IsEnabled = false,
+        ActiveForce = nil,
+        CharacterConnections = {}
+    }
+}
+
+function Modules.Airwalk:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+
+    local function applyAirwalk(character)
+        if not character then return end
+        local hrp = character:WaitForChild("HumanoidRootPart", 2)
+        if not hrp then return end
+
+        -- Clean up any old force before applying a new one
+        if hrp:FindFirstChild("AirwalkForce") then
+             hrp.AirwalkForce:Destroy()
+        end
+        if hrp:FindFirstChild("AirwalkAttachment") then
+            hrp.AirwalkAttachment:Destroy()
+        end
+
+        local attachment = Instance.new("Attachment")
+        attachment.Name = "AirwalkAttachment"
+        attachment.Parent = hrp
+
+        local force = Instance.new("VectorForce")
+        force.Name = "AirwalkForce"
+        force.Attachment0 = attachment
+        force.RelativeTo = Enum.ActuatorRelativeTo.World
+        
+        -- Dynamically calculate the force needed to counteract gravity
+        local characterMass = character:GetMass()
+        force.Force = Vector3.new(0, characterMass * Workspace.Gravity, 0)
+        force.Parent = hrp
+        
+        self.State.ActiveForce = force
+    end
+
+    if LocalPlayer.Character then
+        applyAirwalk(LocalPlayer.Character)
+    end
+
+    self.State.CharacterConnections.Added = LocalPlayer.CharacterAdded:Connect(applyAirwalk)
+    self.State.CharacterConnections.Removing = LocalPlayer.CharacterRemoving:Connect(function()
+        self.State.ActiveForce = nil -- Clear reference on death
+    end)
+    DoNotif("Airwalk: ENABLED.", 2)
+end
+
+function Modules.Airwalk:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+
+    if self.State.ActiveForce and self.State.ActiveForce.Parent then
+        self.State.ActiveForce:Destroy()
+    end
+    self.State.ActiveForce = nil
+
+    -- Also remove from character if it exists but the reference was lost
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        local hrp = LocalPlayer.Character.HumanoidRootPart
+        if hrp:FindFirstChild("AirwalkForce") then hrp.AirwalkForce:Destroy() end
+        if hrp:FindFirstChild("AirwalkAttachment") then hrp.AirwalkAttachment:Destroy() end
+    end
+    
+    for _, connection in pairs(self.State.CharacterConnections) do
+        connection:Disconnect()
+    end
+    table.clear(self.State.CharacterConnections)
+
+    DoNotif("Airwalk: DISABLED.", 2)
+end
+
+function Modules.Airwalk:Toggle()
+    if self.State.IsEnabled then
+        self:Disable()
+    else
+        self:Enable()
+    end
+end
+RegisterCommand({ Name = "airwalk", Aliases = { "awalk" }, Description = "Toggles the ability to walk on air." }, function() Modules.Airwalk:Toggle() end)
+
 Modules.AstralHead = {
 State = {
 IsEnabled = false,
@@ -4716,13 +4859,13 @@ RegisterCommand({Name = "stats", Aliases = {}, Description = "Edit and lock your
 RegisterCommand({Name = "desync", Aliases = {"invis", "astral"}, Description = "Desyncs local player, making them invisable."}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/astralform.txt", "Leaving Physical Body..") end)
 RegisterCommand({Name = "zgui", Aliases = {"upd3", "zui"}, Description = "For Zombie Game upd3"}, function() loadstringCmd("https://raw.githubusercontent.com/zukatechdevelopment-ux/luaprojectse3/refs/heads/main/ZGUI.txt", "Loaded GUI") end)
 RegisterCommand({Name = "swordbot", Aliases = {"sf", "sfbot"}, Description = "Auto Sword Fighter, use E and R"}, function() loadstringCmd("https://raw.githubusercontent.com/bloxtech1/luaprojects2/refs/heads/main/swordnpc", "Bot loaded.") end)
-RegisterCommand({Name = "reload", Aliases = {"update", "exec"}, Description = "Reloads and re-executes the admin script from the GitHub source."}, function() loadstringCmd("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/ZukaMain.lua", "Reloading admin from source...") end)
+RegisterCommand({Name = "reload", Aliases = {"update", "exec"}, Description = "Reloads and re-executes the admin script from the GitHub source."}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/Main.lua", "Reloading admin from source...") end)
 RegisterCommand({Name = "reachmenu", Aliases = {"reachgui", "meleer"}, Description = "Similar to the default reach command  this is a standalone gui."}, function() loadstringCmd("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/ZukasReachGui.lua", "Reach UI") end)
 RegisterCommand({Name = "zoneui", Aliases = {"guns"}, Description = "Loads the Best Gun Giver for Zombie Zone" }, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/ZombieZone.lua", "Loaded") end)
 RegisterCommand({Name = "ibtools", Aliases = {"btools"}, Description = "Upgraded Gui For Btools"}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/IBtools.txt", "Loading Revamped Btools Gui") end)
 RegisterCommand({Name = "ketamine", Aliases = {"kspy"}, Description = "Warning: may crash on xeno"}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/remotes.lua", "Loading SimpleSpy...") end)
 RegisterCommand({Name = "nocooldown", Aliases = {"ncd"}, Description = "Warning: Broken due to xeno."}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/NocooldownsZombieUpd3.txt", "Loading Cooldownremover...") end)
-RegisterCommand({Name = "scripts", Aliases = {"scriptsearch"}, Description = "Decompiles and shows scripts from the game.."}, function() loadstringCmd("https://raw.githubusercontent.com/bloxtech1/luaprojects2/refs/heads/main/scriptsearcher.lua", "Loading Scripts.") end)
+RegisterCommand({Name = "scripts", Aliases = {"scriptsearch"}, Description = "May or may not work.."}, function() loadstringCmd("https://raw.githubusercontent.com/bloxtech1/luaprojects2/refs/heads/main/scriptsearcher.lua", "Loading Scripts.") end)
 RegisterCommand({Name = "antiafk", Aliases = {"npcmode"}, Description = "Avoid being kicked for being idle."}, function() loadstringCmd("https://raw.githubusercontent.com/bloxtech1/luaprojects2/refs/heads/main/AutoPilotMode.lua", "Anti Afk loaded.") end)
 RegisterCommand({Name = "scriptblox", Aliases = {}, Description = "Loads the script blox api."}, function() loadstringCmd("https://raw.githubusercontent.com/AZYsGithub/chillz-workshop/main/ScriptSearcher", "Loading API..") end)
 RegisterCommand({Name = "freakyfling", Aliases = {"ffling"}, Description = "Loads the Kawaii. GUI"}, function() loadstringCmd("https://raw.githubusercontent.com/hellohellohell012321/KAWAII-FREAKY-FLING/main/kawaii_freaky_fling.lua", "Loading GUI..") end)
