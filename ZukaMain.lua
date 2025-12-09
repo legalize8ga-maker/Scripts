@@ -4290,6 +4290,494 @@ function Modules.AdminSpoofDemonstration:Initialize()
         end
     end)
 end
+
+Modules.MADGuardian = {
+    State = {
+        IsEnabled = false,
+        HeartbeatConnection = nil,
+        LastRetaliation = 0
+    },
+    Config = {
+        -- The upward force of our retaliatory fling. Higher is more aggressive.
+        COUNTER_FLING_FORCE = 300,
+        -- How long the counter-fling effect lasts on the attacker, in seconds.
+        COUNTER_FLING_DURATION = 2.5,
+        -- How often to scan for hostile physics objects, in seconds.
+        SCAN_INTERVAL_SECONDS = 0.1,
+        -- A cooldown period after retaliating to prevent spamming the counter-attack.
+        RETALIATION_COOLDOWN_SECONDS = 3,
+        -- An attribute to mark our own physics objects so the script doesn't destroy them.
+        COUNTER_ATTACK_TAG = "MAD_Counter"
+    }
+}
+
+--- [Internal] Finds the player character closest to the local player.
+-- @returns Player? The closest player object, or nil if none are found.
+function Modules.MADGuardian:_findClosestPlayer()
+    local closestPlayer, minDistance = nil, math.huge
+    local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not localRoot then return nil end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local targetRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            if targetRoot then
+                local distance = (localRoot.Position - targetRoot.Position).Magnitude
+                if distance < minDistance then
+                    minDistance, closestPlayer = distance, player
+                end
+            end
+        end
+    end
+    return closestPlayer
+end
+
+--- [Internal] Initiates a retaliatory fling against a specified target.
+-- @param targetCharacter Model The character model of the player to be flung.
+function Modules.MADGuardian:_initiateCounterFling(targetCharacter)
+    local targetRoot = targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart")
+    if not targetRoot then return end
+
+    DoNotif("MAD Guardian: Retaliating against '"..targetCharacter.Name.."'", 1.5)
+
+    local counterVelocity = Instance.new("BodyVelocity")
+    counterVelocity.MaxForce = Vector3.new(0, math.huge, 0)
+    counterVelocity.Velocity = Vector3.new(0, self.Config.COUNTER_FLING_FORCE, 0)
+    counterVelocity.Parent = targetRoot
+    counterVelocity:SetAttribute(self.Config.COUNTER_ATTACK_TAG, true)
+
+    -- Schedule the self-destruction of our counter-attack object.
+    task.delay(self.Config.COUNTER_FLING_DURATION, function()
+        if counterVelocity and counterVelocity.Parent then
+            counterVelocity:Destroy()
+        end
+    end)
+end
+
+--- [Internal] The main detection loop connected to RunService.Heartbeat.
+function Modules.MADGuardian:_onHeartbeat()
+    local character = LocalPlayer.Character
+    if not character then return end
+
+    -- Scan for hostile physics movers descendant to the character.
+    for _, descendant in ipairs(character:GetDescendants()) do
+        -- BodyMover is the base class for BodyVelocity, BodyPosition, etc.
+        -- We ignore any movers that have our specific tag.
+        if descendant:IsA("BodyMover") and not descendant:GetAttribute(self.Config.COUNTER_ATTACK_TAG) then
+            DoNotif("MAD Guardian: Hostile BodyMover '"..descendant.ClassName.."' detected. Nullifying.", 1)
+            
+            -- Stage 1: Defend by destroying the object.
+            descendant:Destroy()
+
+            -- Stage 2: Check if we are off cooldown for retaliation.
+            local now = os.clock()
+            if now - self.State.LastRetaliation > self.Config.RETALIATION_COOLDOWN_SECONDS then
+                self.State.LastRetaliation = now
+                
+                -- Stage 3: Find a target and retaliate.
+                local attacker = self:_findClosestPlayer()
+                if attacker then
+                    self:_initiateCounterFling(attacker.Character)
+                end
+            end
+            
+            -- We only handle one object per frame to be safe.
+            break
+        end
+    end
+end
+
+--- Enables the MAD Guardian.
+function Modules.MADGuardian:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+    
+    self.State.HeartbeatConnection = RunService.Heartbeat:Connect(function() self:_onHeartbeat() end)
+    
+    DoNotif("MAD Guardian: ENABLED. Fling retaliation is active.", 2)
+end
+
+--- Disables the MAD Guardian.
+function Modules.MADGuardian:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+    
+    if self.State.HeartbeatConnection then
+        self.State.HeartbeatConnection:Disconnect()
+        self.State.HeartbeatConnection = nil
+    end
+    
+    DoNotif("MAD Guardian: DISABLED.", 2)
+end
+
+--- Toggles the MAD Guardian's state.
+function Modules.MADGuardian:Toggle()
+    if self.State.IsEnabled then
+        self:Disable()
+    else
+        self:Enable()
+    end
+end
+
+--- Registers the command with your admin system.
+function Modules.MADGuardian:Initialize()
+    local module = self
+    RegisterCommand({
+        Name = "mad",
+        Aliases = {"flingback", "antiflingretaliate"},
+        Description = "Toggles a counter-fling system that retaliates against attackers."
+    }, function()
+        module:Toggle()
+    end)
+end
+
+
+Modules.ClientCanary = {
+    State = {
+        IsEnabled = false,
+        HeartbeatConnection = nil,
+        ViolationData = {}, -- [Player] = { Level = number, LastCheck = number }
+        HighlightedPlayers = {} -- [Player] = true
+    },
+    Config = {
+        -- The horizontal speed (in studs/sec) above which behavior is considered suspicious.
+        -- Normal walk speed is 16. This provides a generous buffer for normal game physics.
+        MAX_REASONABLE_SPEED = 75,
+        -- The number of violation "points" a player needs to accumulate before being flagged.
+        VIOLATION_THRESHOLD = 8,
+        -- How quickly (in seconds) a single violation point decays. This prevents false
+        -- positives from single instances of high velocity (e.g., explosions).
+        VIOLATION_DECAY_TIME = 2.5,
+        -- How often (in seconds) the system checks players.
+        CHECK_INTERVAL_SECONDS = 0.25
+    }
+}
+
+--- [Internal] The main detection loop connected to RunService.Heartbeat.
+function Modules.ClientCanary:_onHeartbeat(deltaTime)
+    local now = os.clock()
+    -- Iterate through all players and decay their violation levels over time.
+    for player, data in pairs(self.State.ViolationData) do
+        if now - data.LastCheck > self.Config.VIOLATION_DECAY_TIME then
+            data.Level = math.max(0, data.Level - 1)
+            data.LastCheck = now
+        end
+        if not player.Parent then -- Garbage collect data for players who left
+            self.State.ViolationData[player] = nil
+        end
+    end
+
+    -- Iterate through all players to check for new violations.
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and self.State.HighlightedPlayers[player] == nil then
+            local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+            local rootPart = player.Character:FindFirstChild("HumanoidRootPart")
+
+            if humanoid and rootPart and humanoid.Health > 0 then
+                -- We check horizontal velocity to ignore high speeds from falling.
+                local horizontalVelocity = Vector3.new(rootPart.AssemblyLinearVelocity.X, 0, rootPart.AssemblyLinearVelocity.Z)
+                
+                if horizontalVelocity.Magnitude > self.Config.MAX_REASONABLE_SPEED then
+                    local data = self.State.ViolationData[player] or { Level = 0, LastCheck = now }
+                    data.Level = data.Level + 1
+                    data.LastCheck = now
+                    self.State.ViolationData[player] = data
+                    
+                    -- If violation level exceeds the threshold, flag the player.
+                    if data.Level >= self.Config.VIOLATION_THRESHOLD then
+                        DoNotif(string.format("Exploiter Detected: %s (Reason: Sustained Speed)", player.Name), 4)
+                        
+                        -- Leverage the existing Highlight module to apply the visual.
+                        pcall(function()
+                            Modules.HighlightPlayer:ApplyHighlight(player.Character)
+                        end)
+                        
+                        self.State.HighlightedPlayers[player] = true
+                        self.State.ViolationData[player] = nil -- Reset their data to prevent re-flagging.
+                    end
+                end
+            end
+        end
+    end
+end
+
+--- Enables the Client Canary.
+function Modules.ClientCanary:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+    
+    local lastCheck = 0
+    self.State.HeartbeatConnection = RunService.Heartbeat:Connect(function(deltaTime)
+        -- Throttle the main check for performance.
+        if os.clock() - lastCheck > self.Config.CHECK_INTERVAL_SECONDS then
+            self:_onHeartbeat(deltaTime)
+            lastCheck = os.clock()
+        end
+    end)
+    
+    DoNotif("Client Canary: ENABLED. Automated exploiter detection is active.", 2)
+end
+
+--- Disables the Client Canary and clears any highlights it created.
+function Modules.ClientCanary:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+    
+    if self.State.HeartbeatConnection then
+        self.State.HeartbeatConnection:Disconnect()
+        self.State.HeartbeatConnection = nil
+    end
+
+    -- Clear all highlights that this module was responsible for.
+    for player, _ in pairs(self.State.HighlightedPlayers) do
+        -- We don't call ClearHighlight directly as it clears for all targets.
+        -- Instead, we check if our highlight is still the active one.
+        if Modules.HighlightPlayer.State.TargetPlayer == player then
+            Modules.HighlightPlayer:ClearHighlight()
+        end
+    end
+    
+    table.clear(self.State.ViolationData)
+    table.clear(self.State.HighlightedPlayers)
+    
+    DoNotif("Client Canary: DISABLED.", 2)
+end
+
+--- Toggles the Client Canary's state.
+function Modules.ClientCanary:Toggle()
+    if self.State.IsEnabled then
+        self:Disable()
+    else
+        self:Enable()
+    end
+end
+
+--- Registers the command with your admin system.
+function Modules.ClientCanary:Initialize()
+    local module = self
+    RegisterCommand({
+        Name = "autodetect",
+        Aliases = {"canary", "watchdog"},
+        Description = "Toggles the automated client-side exploiter detection system."
+    }, function()
+        module:Toggle()
+    end)
+end
+
+Modules.ClientFling = {
+    State = {
+        IsEnabled = false,
+        FlingConnection = nil,
+        Target = nil,
+        OriginalCFrame = nil
+    },
+    Config = {
+        -- A series of Vector3 offsets to teleport to, relative to the target's CFrame.
+        -- This sequence is designed to create maximum physics instability.
+        FLING_OFFSETS = {
+            Vector3.new(0, -3.5, 0),  -- From below (upward force)
+            Vector3.new(0, 3, 2),    -- From above and behind
+            Vector3.new(2, -3.5, 0),   -- From below and to the right
+            Vector3.new(0, 3, -2),   -- From above and in front
+            Vector3.new(-2, -3.5, 0)  -- From below and to the left
+        }
+    }
+}
+
+--- Enables the fling loop on the target player.
+function Modules.ClientFling:Enable(targetPlayer)
+    if self.State.IsEnabled then return end
+    
+    local localCharacter = LocalPlayer.Character
+    local localRoot = localCharacter and localCharacter:FindFirstChild("HumanoidRootPart")
+    local targetCharacter = targetPlayer.Character
+    local targetRoot = targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart")
+
+    if not (localRoot and targetRoot) then
+        return DoNotif("Cannot initiate fling: A required character part is missing.", 3)
+    end
+    
+    self.State.IsEnabled = true
+    self.State.Target = targetPlayer
+    self.State.OriginalCFrame = localRoot.CFrame
+    
+    -- Anchor our own root part locally. This prevents us from being affected by the
+    -- physics chaos we are creating, focusing all energy on the target.
+    localRoot.Anchored = true
+    
+    DoNotif("ClientFling ENABLED. Targeting: " .. targetPlayer.Name, 2)
+    
+    local offsetIndex = 1
+    self.State.FlingConnection = RunService.Heartbeat:Connect(function()
+        -- Re-validate targets every frame. If anything is wrong, abort.
+        if not (self.State.IsEnabled and self.State.Target and self.State.Target.Parent and self.State.Target.Character) then
+            self:Disable()
+            return
+        end
+        
+        local currentTargetRoot = self.State.Target.Character:FindFirstChild("HumanoidRootPart")
+        if not currentTargetRoot then
+            self:Disable()
+            return
+        end
+        
+        -- The core of the exploit: rapidly set our CFrame to strategic points around the target.
+        local targetCFrame = currentTargetRoot.CFrame
+        local offset = self.Config.FLING_OFFSETS[offsetIndex]
+        localRoot.CFrame = targetCFrame * CFrame.new(offset)
+        
+        -- Cycle through the offsets for the next frame.
+        offsetIndex = (offsetIndex % #self.Config.FLING_OFFSETS) + 1
+    end)
+end
+
+--- Disables the fling loop and restores the player's state.
+function Modules.ClientFling:Disable()
+    if not self.State.IsEnabled then return end
+    
+    self.State.IsEnabled = false
+    if self.State.FlingConnection then
+        self.State.FlingConnection:Disconnect()
+        self.State.FlingConnection = nil
+    end
+
+    DoNotif("ClientFling DISABLED. Restoring position.", 2)
+    
+    -- This must be done in a new thread to avoid disrupting the current one.
+    task.spawn(function()
+        local localCharacter = LocalPlayer.Character
+        local localRoot = localCharacter and localCharacter:FindFirstChild("HumanoidRootPart")
+        
+        if localRoot and self.State.OriginalCFrame then
+            -- Unanchor and attempt to return to the starting position.
+            localRoot.Anchored = false
+            localRoot.CFrame = self.State.OriginalCFrame
+            -- Reset velocity to stabilize the character after the fling.
+            localRoot.Velocity = Vector3.zero
+            localRoot.RotVelocity = Vector3.zero
+        end
+
+        self.State.Target = nil
+        self.State.OriginalCFrame = nil
+    end)
+end
+
+--- Initializes the module and registers the command.
+function Modules.ClientFling:Initialize()
+    local module = self
+    RegisterCommand({
+        Name = "cfling",
+        Aliases = {"clientfling"},
+        Description = "Toggles a client-sided loop fling on a player. Usage: ;cfling <PlayerName>"
+    }, function(args)
+        if module.State.IsEnabled then
+            module:Disable()
+            return
+        end
+
+        if not args[1] then
+            return DoNotif("Usage: ;cfling <PlayerName>", 3)
+        end
+        
+        local targetPlayer = Utilities.findPlayer(args[1])
+        if not targetPlayer then
+            return DoNotif("Target player not found.", 3)
+        end
+
+        module:Enable(targetPlayer)
+    end)
+end
+
+Modules.ForceRespawn = {
+    -- This module does not require persistent state, so the State table is omitted.
+}
+
+--- Executes the client-sided respawn sequence.
+function Modules.ForceRespawn:Execute()
+    --// SERVICES
+    local Players = game:GetService("Players")
+    local Workspace = game:GetService("Workspace")
+
+    --// CONSTANTS & LOCALS
+    local localPlayer: Player = Players.LocalPlayer
+    local character: Model? = localPlayer.Character
+    local humanoidRootPart: BasePart? = character and character:FindFirstChild("HumanoidRootPart")
+
+    --// VALIDATION
+    if not (character and humanoidRootPart) then
+        DoNotif("Cannot respawn: Character or HumanoidRootPart not found.", 3)
+        return
+    end
+
+    --// CAPTURE CURRENT STATE
+    -- We save the CFrame of both the character and camera to restore them post-respawn.
+    local originalCharacterCFrame: CFrame = humanoidRootPart.CFrame
+    local originalCameraCFrame: CFrame = Workspace.CurrentCamera.CFrame
+
+    --// RESPAWN LOGIC
+    local success, err = pcall(function()
+        -- [METHOD 1] Executor-Specific Respawn (High Reliability)
+        -- This attempts to use non-standard, environment-specific functions for a cleaner respawn.
+        -- 'gethiddenproperty' checks if the game prevents standard character deletion methods.
+        local isDeletionRejected: boolean = gethiddenproperty(Workspace, "RejectCharacterDeletions")
+
+        if isDeletionRejected and replicatesignal then
+            -- If character deletion is rejected and we have 'replicatesignal', use the high-level method.
+            replicatesignal(localPlayer.ConnectDiedSignalBackend)
+            task.wait(Players.RespawnTime - 0.1) -- Wait just before the default respawn time.
+            replicatesignal(localPlayer.Kill)
+        else
+            -- [METHOD 2] Manual Fallback Respawn (Universal Compatibility)
+            -- This method works in most environments by manually destroying the character
+            -- and tricking the engine into loading a new one.
+            local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid:ChangeState(Enum.HumanoidStateType.Dead)
+            end
+            character:ClearAllChildren()
+
+            -- Create a temporary model to force the character property to update.
+            local tempModel = Instance.new("Model")
+            tempModel.Parent = Workspace
+            localPlayer.Character = tempModel
+            task.wait() -- Wait for replication cycle.
+            localPlayer.Character = nil -- Setting to nil triggers the standard respawn logic.
+            tempModel:Destroy()
+        end
+    end)
+
+    if not success then
+        warn("[ForceRespawn] Respawn logic failed:", err)
+        DoNotif("Respawn failed. See developer console for details.", 4)
+        return
+    end
+
+    --// STATE RESTORATION
+    -- Spawn a new thread to wait for the new character and restore the saved positions.
+    task.spawn(function()
+        local pcallSuccess, newCharacter = pcall(function()
+            return localPlayer.CharacterAdded:Wait()
+        end)
+
+        if not pcallSuccess then return end
+
+        local newHrp = newCharacter:WaitForChild("HumanoidRootPart", 5)
+        if newHrp then
+            newHrp.CFrame = originalCharacterCFrame
+            Workspace.CurrentCamera.CFrame = originalCameraCFrame
+        end
+    end)
+end
+
+--// COMMAND REGISTRATION
+RegisterCommand({
+    Name = "respawn",
+    Aliases = {"re", "rr"},
+    Description = "Forces a client-sided character respawn, attempting to preserve position."
+}, function()
+    Modules.ForceRespawn:Execute()
+end)
+
 Modules.SuperPush = {
 State = {
 IsEnabled = false,
