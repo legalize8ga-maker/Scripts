@@ -3730,6 +3730,157 @@ function Modules.Airwalk:Toggle()
 end
 RegisterCommand({ Name = "airwalk", Aliases = { "awalk" }, Description = "Toggles the ability to walk on air." }, function() Modules.Airwalk:Toggle() end)
 
+Modules.AntiCheatBypass = {
+    State = {
+        IsEnabled = false,
+        HookedHumanoids = setmetatable({}, {__mode = "k"}), 
+        Connections = {}
+    },
+    Config = {
+        VANILLA_WALKSPEED = 16,
+        VANILLA_JUMPPOWER = 50,
+        TRUE_WALKSPEED_KEY = "AntiCheatBypass_TrueWalkSpeed",
+        TRUE_JUMPPOWER_KEY = "AntiCheatBypass_TrueJumpPower"
+    }
+}
+
+--- Applies the metatable hooks to a character's humanoid.
+function Modules.AntiCheatBypass:_applyHooks(character)
+    if not character then return end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or self.State.HookedHumanoids[humanoid] then
+        return
+    end
+
+    local success, mt = pcall(getrawmetatable, humanoid)
+    if not success or typeof(mt) ~= "table" then
+        warn("AntiCheatBypass: Failed to get humanoid metatable. Environment may not be supported.")
+        return
+    end
+
+    local originalIndex = mt.__index
+    local originalNewIndex = mt.__newindex
+    self.State.HookedHumanoids[humanoid] = { originalIndex, originalNewIndex }
+
+    humanoid[self.Config.TRUE_WALKSPEED_KEY] = humanoid.WalkSpeed
+    humanoid[self.Config.TRUE_JUMPPOWER_KEY] = humanoid.JumpPower
+
+    setreadonly(mt, false)
+
+    mt.__index = function(self, key)
+        if key == "WalkSpeed" then
+            return Modules.AntiCheatBypass.Config.VANILLA_WALKSPEED
+        end
+        if key == "JumpPower" then
+            return Modules.AntiCheatBypass.Config.VANILLA_JUMPPOWER
+        end
+        return originalIndex(self, key)
+    end
+
+    mt.__newindex = function(self, key, value)
+        if key == "WalkSpeed" then
+            humanoid[Modules.AntiCheatBypass.Config.TRUE_WALKSPEED_KEY] = value
+            return
+        end
+        if key == "JumpPower" then
+            humanoid[Modules.AntiCheatBypass.Config.TRUE_JUMPPOWER_KEY] = value
+            return
+        end
+        return originalNewIndex(self, key, value)
+    end
+
+    setreadonly(mt, true)
+end
+
+--- Removes the metatable hooks and restores original behavior.
+function Modules.AntiCheatBypass:_removeHooks(character)
+    if not character then return end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or not self.State.HookedHumanoids[humanoid] then
+        return
+    end
+
+    local success, mt = pcall(getrawmetatable, humanoid)
+    if not success or typeof(mt) ~= "table" then
+        return
+    end
+
+    local originalMeta = self.State.HookedHumanoids[humanoid]
+    setreadonly(mt, false)
+    mt.__index = originalMeta[1]
+    mt.__newindex = originalMeta[2]
+    setreadonly(mt, true)
+
+    if humanoid[self.Config.TRUE_WALKSPEED_KEY] then
+        humanoid.WalkSpeed = humanoid[self.Config.TRUE_WALKSPEED_KEY]
+    end
+    if humanoid[self.Config.TRUE_JUMPPOWER_KEY] then
+        humanoid.JumpPower = humanoid[self.Config.TRUE_JUMPPOWER_KEY]
+    end
+
+    self.State.HookedHumanoids[humanoid] = nil
+end
+
+--- Enables the Anti-Cheat Bypass system.
+function Modules.AntiCheatBypass:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+
+    if LocalPlayer.Character then
+        self:_applyHooks(LocalPlayer.Character)
+    end
+
+    self.State.Connections.CharacterAdded = LocalPlayer.CharacterAdded:Connect(function(character)
+        self:_applyHooks(character)
+    end)
+    self.State.Connections.CharacterRemoving = LocalPlayer.CharacterRemoving:Connect(function(character)
+        self:_removeHooks(character)
+    end)
+
+    DoNotif("Anti-Cheat Bypass: ENABLED. Humanoid properties sanitized.", 3)
+end
+
+--- Disables the Anti-Cheat Bypass system.
+function Modules.AntiCheatBypass:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+
+    for _, conn in pairs(self.State.Connections) do
+        conn:Disconnect()
+    end
+    table.clear(self.State.Connections)
+
+    if LocalPlayer.Character then
+        self:_removeHooks(LocalPlayer.Character)
+    end
+
+    for humanoid, _ in pairs(self.State.HookedHumanoids) do
+        if humanoid.Parent then
+            self:_removeHooks(humanoid.Parent)
+        end
+    end
+
+    DoNotif("Anti-Cheat Bypass: DISABLED. Humanoid properties restored.", 3)
+end
+
+--- Toggles the state of the bypass.
+function Modules.AntiCheatBypass:Toggle()
+    if self.State.IsEnabled then
+        self:Disable()
+    else
+        self:Enable()
+    end
+end
+
+-- [FIX]: This entire function call was missing, causing the syntax error on the next module.
+RegisterCommand({
+    Name = "acbypass",
+    Aliases = {"anticheatbypass", "sanitize"},
+    Description = "Toggles a bypass that makes your WalkSpeed and JumpPower appear normal to client-side anti-cheats."
+}, function()
+    Modules.AntiCheatBypass:Toggle()
+end)
+
 Modules.AntiVoid = {
     State = {
         IsEnabled = false,
@@ -4778,6 +4929,192 @@ RegisterCommand({
     Modules.ForceRespawn:Execute()
 end)
 
+local function createFlingGui()
+	-- This function is self-contained and creates the entire Fling GUI.
+	-- It returns the top-level ScreenGui instance so it can be managed by the module.
+	
+	--// Services (scoped locally)
+	local runService: RunService = game:GetService("RunService")
+	local playersService: Players = game:GetService("Players")
+
+	--// Configuration & State
+	local isToggled: boolean = false
+	local flingPower: number = 1
+	local yVelocityOffset: number = 0.1
+
+	--// Player Variables
+	local localPlayer: Player = playersService.LocalPlayer
+	local playerGui: PlayerGui = localPlayer:WaitForChild("PlayerGui")
+
+	--// GUI Instances
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "ZukaFlingGUI"
+	screenGui.ResetOnSpawn = false
+	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+
+	local mainFrame = Instance.new("Frame")
+	mainFrame.Size = UDim2.new(0, 250, 0, 280)
+	mainFrame.Position = UDim2.new(0.5, -125, 0.5, -140)
+	mainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+	mainFrame.BorderSizePixel = 0
+	mainFrame.Active = true
+	mainFrame.Draggable = true
+	mainFrame.ClipsDescendants = true
+	mainFrame.Parent = screenGui
+	Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
+	Instance.new("UIStroke", mainFrame).Color = Color3.fromRGB(80, 80, 100)
+	
+	local toggleButton = Instance.new("TextButton")
+	toggleButton.Size = UDim2.new(0, 220, 0, 30)
+	toggleButton.Position = UDim2.new(0.5, -110, 0, 10)
+	toggleButton.Text = "Toggle OFF"
+	toggleButton.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+	toggleButton.TextColor3 = Color3.fromRGB(220, 220, 220)
+	toggleButton.Font = Enum.Font.Gotham
+	toggleButton.Parent = mainFrame
+	Instance.new("UICorner", toggleButton).CornerRadius = UDim.new(0, 4)
+
+	local powerLabel = Instance.new("TextLabel")
+	powerLabel.Size = UDim2.new(0, 70, 0, 35)
+	powerLabel.Position = UDim2.new(0.5, -35, 0, 50)
+	powerLabel.Text = tostring(flingPower)
+	powerLabel.TextScaled = true
+	powerLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+	powerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	powerLabel.Font = Enum.Font.GothamBold
+	powerLabel.Parent = mainFrame
+	Instance.new("UICorner", powerLabel).CornerRadius = UDim.new(0, 4)
+
+	local increaseButton = Instance.new("TextButton")
+	increaseButton.Size = UDim2.new(0, 40, 0, 40)
+	increaseButton.Position = UDim2.new(0.5, 50, 0, 95)
+	increaseButton.Text = "+"
+	increaseButton.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+	increaseButton.TextColor3 = Color3.fromRGB(220, 220, 220)
+	increaseButton.Font = Enum.Font.GothamBold
+	increaseButton.TextSize = 24
+	increaseButton.Parent = mainFrame
+	Instance.new("UICorner", increaseButton).CornerRadius = UDim.new(0, 4)
+
+	local decreaseButton = Instance.new("TextButton")
+	decreaseButton.Size = UDim2.new(0, 40, 0, 40)
+	decreaseButton.Position = UDim2.new(0.5, -85, 0, 95)
+	decreaseButton.Text = "-"
+	decreaseButton.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+	decreaseButton.TextColor3 = Color3.fromRGB(220, 220, 220)
+	decreaseButton.Font = Enum.Font.GothamBold
+	decreaseButton.TextSize = 24
+	decreaseButton.Parent = mainFrame
+	Instance.new("UICorner", decreaseButton).CornerRadius = UDim.new(0, 4)
+	
+	local function createPresetButton(text, power, yPos)
+		local button = Instance.new("TextButton")
+		button.Size = UDim2.new(0, 220, 0, 35)
+		button.Position = UDim2.new(0.5, -110, 0, yPos)
+		button.Text = text
+		button.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+		button.TextColor3 = Color3.fromRGB(220, 220, 220)
+		button.Font = Enum.Font.Gotham
+		button.Parent = mainFrame
+		Instance.new("UICorner", button).CornerRadius = UDim.new(0, 4)
+		button.MouseButton1Click:Connect(function()
+			flingPower = power
+			powerLabel.Text = tostring(flingPower)
+		end)
+		return button
+	end
+
+	createPresetButton("Normal Fling", 1, 140)
+	createPresetButton("Super Fling", 3, 180)
+	createPresetButton("Ultra Fling", 5, 220)
+
+	-- Frame Controls
+	local closeButton = Instance.new("TextButton")
+	closeButton.Size = UDim2.new(0, 20, 0, 20)
+	closeButton.Position = UDim2.new(1, -10, 0, 5)
+	closeButton.Text = "X"
+	closeButton.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
+	closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	closeButton.Font = Enum.Font.GothamBold
+	closeButton.Parent = mainFrame
+	Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 4)
+
+	--// Functions
+	local function updatePowerLabel()
+		powerLabel.Text = tostring(flingPower)
+	end
+
+	--// Event Connections
+	toggleButton.MouseButton1Click:Connect(function()
+		isToggled = not isToggled
+		toggleButton.Text = if isToggled then "Toggle ON" else "Toggle OFF"
+		toggleButton.TextColor3 = if isToggled then Color3.fromRGB(0, 255, 0) else Color3.fromRGB(220, 220, 220)
+	end)
+
+	increaseButton.MouseButton1Click:Connect(function()
+		flingPower += 1
+		updatePowerLabel()
+	end)
+
+	decreaseButton.MouseButton1Click:Connect(function()
+		flingPower = math.max(1, flingPower - 1)
+		updatePowerLabel()
+	end)
+
+	closeButton.MouseButton1Click:Connect(function()
+		screenGui:Destroy()
+	end)
+
+	--// Core Fling Logic
+	runService.Heartbeat:Connect(function()
+		if not isToggled or not screenGui.Parent then return end -- Stop if toggled off or GUI is destroyed
+
+		local character: Model? = localPlayer.Character
+		local humanoidRootPart: BasePart? = character and character:FindFirstChild("HumanoidRootPart")
+
+		if humanoidRootPart then
+			local originalVelocity: Vector3 = humanoidRootPart.Velocity
+			humanoidRootPart.Velocity = (originalVelocity * flingPower * 100) + Vector3.new(0, flingPower * 100, 0)
+			runService.RenderStepped:Wait()
+			humanoidRootPart.Velocity = originalVelocity
+			runService.Stepped:Wait()
+			humanoidRootPart.Velocity = originalVelocity + Vector3.new(0, yVelocityOffset, 0)
+			yVelocityOffset = -yVelocityOffset
+		end
+	end)
+	
+	-- Final Parenting and return
+	screenGui.Parent = CoreGui
+	return screenGui
+end
+
+Modules.FlingGUI = {
+    State = {
+        UI = nil -- This will hold the reference to the ScreenGui
+    }
+}
+
+function Modules.FlingGUI:Toggle()
+    -- Check if the UI exists and is currently in the game hierarchy
+    if self.State.UI and self.State.UI.Parent then
+        self.State.UI:Destroy()
+        self.State.UI = nil
+        DoNotif("Fling GUI closed.", 2)
+    else
+        -- The createFlingGui function returns the main ScreenGui instance.
+        self.State.UI = createFlingGui()
+        DoNotif("Fling GUI opened.", 2)
+    end
+end
+
+RegisterCommand({
+    Name = "flinggui",
+    Aliases = {"fgui", "flingui"},
+    Description = "Toggles the client-sided character fling GUI."
+}, function()
+    Modules.FlingGUI:Toggle()
+end)
+
 Modules.SuperPush = {
 State = {
 IsEnabled = false,
@@ -5566,9 +5903,6 @@ local function loadstringCmd(url, notif)
     end)
     DoNotif(notif, 3)
 end
-RegisterCommand({Name = "touchfling", Aliases = {"tfling"}, Description = "Loads the FLING ui"}, function()
-loadstringCmd("https://raw.githubusercontent.com/miso517/scirpt/refs/heads/main/main.lua", "Fling GUI Loaded")
-end)
 RegisterCommand({Name = "teleporter", Aliases = {"tpui"}, Description = "Loads the Game Universe."}, function()
 loadstringCmd("https://raw.githubusercontent.com/ltseverydayyou/uuuuuuu/main/Universe%20Viewer", "Universe Initialized")
 end)
