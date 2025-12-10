@@ -1157,6 +1157,176 @@ RegisterCommand({ Name = "fpsboost", Aliases = { "noshadows", "performance" }, D
     Modules.Performance:Toggle()
 end)
 
+Modules.AstralProjection = {
+    State = {
+        isProjecting = false,
+        isSpawning = false,
+        originalHRP = nil,
+        originalParent = nil,
+        deathConnection = nil,
+        positionMarker = nil
+    },
+    Config = {
+        TOGGLE_KEY = Enum.KeyCode.G,
+        SPAWN_PROTECTION_DURATION = 2
+    },
+    GUI = {},
+    Services = {}
+}
+
+function Modules.AstralProjection:_applyVisuals(character, isAstral)
+    local highlight = character:FindFirstChild("AstralHighlight")
+    if isAstral and not highlight then
+        highlight = Instance.new("Highlight", character)
+        highlight.Name = "AstralHighlight"
+        highlight.FillColor = Color3.fromRGB(0, 200, 255)
+        highlight.OutlineColor = Color3.fromRGB(200, 255, 255)
+        highlight.FillTransparency = 0.5
+    elseif not isAstral and highlight then
+        highlight:Destroy()
+    end
+end
+
+function Modules.AstralProjection:_setState(shouldProject)
+    if self.State.isSpawning then
+        print("Astral Projection: Cannot toggle while spawning.")
+        return
+    end
+    if self.State.isProjecting == shouldProject then return end
+
+    local character = self.Services.LocalPlayer.Character
+    if not character then return end
+
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+    if shouldProject then
+        if not hrp or not humanoid then return end
+
+        self.State.isProjecting = true
+        self.State.originalHRP = hrp
+        self.State.originalParent = character
+
+        if self.State.positionMarker then self.State.positionMarker:Destroy() end
+        local marker = Instance.new("Part")
+        marker.Name = "PhysicalAnchor"
+        marker.Size = Vector3.new(4, 5, 2)
+        marker.CFrame = hrp.CFrame
+        marker.Anchored = true
+        marker.CanCollide = false
+        marker.Transparency = 0.7
+        marker.Parent = self.Services.Workspace
+        self.State.positionMarker = marker
+
+        local highlight = Instance.new("Highlight", marker)
+        highlight.FillColor = Color3.fromRGB(255, 50, 50)
+        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+        highlight.FillTransparency = 0.6
+
+        self.State.originalHRP.Parent = nil
+
+        humanoid:ChangeState(Enum.HumanoidStateType.Running)
+
+        self:_applyVisuals(character, true)
+        self.GUI.statusLabel.Text = "Astral Projection: ENABLED"
+        DoNotif("Astral Projection: ENABLED", 1.5)
+
+    else
+        if not self.State.originalHRP or not self.State.originalParent or not self.State.originalParent.Parent then
+            self.State.isProjecting = false
+            return
+        end
+
+        if self.State.positionMarker then
+            self.State.positionMarker:Destroy()
+            self.State.positionMarker = nil
+        end
+
+        self.State.originalHRP.Parent = self.State.originalParent
+
+        self.State.isProjecting = false
+        self.State.originalHRP = nil
+        self.State.originalParent = nil
+
+        self:_applyVisuals(character, false)
+        self.GUI.statusLabel.Text = "Astral Projection: DISABLED"
+        DoNotif("Astral Projection: DISABLED", 1.5)
+    end
+end
+
+function Modules.AstralProjection:_onDied()
+    print("Astral Projection: Death detected. Forcing resynchronization...")
+    self:_setState(false)
+end
+
+function Modules.AstralProjection:_onCharacterAdded(character)
+    self.State.isSpawning = true
+    self.GUI.statusLabel.Text = "Astral Projection: RESPAWNING..."
+
+    if self.State.isProjecting then self:_setState(false) end
+    if self.State.deathConnection then self.State.deathConnection:Disconnect() end
+
+    local humanoid = character:WaitForChild("Humanoid")
+    self.State.deathConnection = humanoid.Died:Connect(function() self:_onDied() end)
+
+    task.wait(self.Config.SPAWN_PROTECTION_DURATION)
+    self.State.isSpawning = false
+    self.GUI.statusLabel.Text = "Astral Projection: DISABLED"
+end
+
+function Modules.AstralProjection:Toggle()
+    self:_setState(not self.State.isProjecting)
+end
+
+function Modules.AstralProjection:Initialize()
+    --// --- SERVICES & CORE VARIABLES ---
+    self.Services.Players = game:GetService("Players")
+    self.Services.UserInputService = game:GetService("UserInputService")
+    self.Services.RunService = game:GetService("RunService")
+    self.Services.Workspace = game:GetService("Workspace")
+    self.Services.LocalPlayer = self.Services.Players.LocalPlayer
+    local PLAYER_GUI = self.Services.LocalPlayer:WaitForChild("PlayerGui")
+
+    --// --- GUI ELEMENTS ---
+    local screenGui = Instance.new("ScreenGui", PLAYER_GUI)
+    screenGui.Name = "AstralStatusGUI"
+    screenGui.ResetOnSpawn = false
+    self.GUI.screenGui = screenGui
+
+    local statusLabel = Instance.new("TextLabel", screenGui)
+    statusLabel.Size = UDim2.new(0, 250, 0, 30)
+    statusLabel.Position = UDim2.new(0.5, -125, 0, 150)
+    statusLabel.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    statusLabel.BackgroundTransparency = 0.3
+    statusLabel.TextColor3 = Color3.fromRGB(0, 200, 255)
+    statusLabel.Font = Enum.Font.SourceSansBold
+    statusLabel.Text = "Astral Projection: DISABLED"
+    self.GUI.statusLabel = statusLabel
+
+    --// --- EVENT CONNECTIONS ---
+    self.Services.UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed or input.KeyCode ~= self.Config.TOGGLE_KEY then return end
+        self:Toggle()
+    end)
+
+    if self.Services.LocalPlayer.Character then
+        self:_onCharacterAdded(self.Services.LocalPlayer.Character)
+    end
+    self.Services.LocalPlayer.CharacterAdded:Connect(function(character)
+        self:_onCharacterAdded(character)
+    end)
+
+    print("--- Astral Projection V10 (Anchor Core) Module Initialized ---")
+end
+
+--// --- COMMAND REGISTRATION ---
+RegisterCommand({
+    Name = "astral",
+    Aliases = {"desync", "unsync"},
+    Description = "Toggles astral projection, desyncing yourself remaining invisible to others."
+}, function()
+    Modules.AstralProjection:Toggle()
+end)
 
 Modules.AnchorSelf = {
     State = {
@@ -4203,6 +4373,150 @@ function Modules.HumanoidIntegrity:Initialize()
     module:Toggle()
 end)
 end
+
+Modules.TeleporterScanner = {
+	State = {
+		UI = nil, -- Will hold the ScreenGui instance
+		IsScanning = false,
+		Highlights = {} -- Module-specific highlight table
+	}
+}
+
+function Modules.TeleporterScanner:ToggleGUI()
+	local self = Modules.TeleporterScanner
+
+	-- If the UI already exists, destroy it and clean up.
+	if self.State.UI and self.State.UI.Parent then
+		-- Run the cleanup logic before destroying
+		for _, highlight in pairs(self.State.Highlights) do
+			if highlight and highlight.Parent then highlight:Destroy() end
+		end
+		table.clear(self.State.Highlights)
+		
+		self.State.UI:Destroy()
+		self.State.UI = nil
+		DoNotif("Teleporter Scanner closed.", 2)
+		return
+	end
+
+	-- Create the UI from scratch
+	DoNotif("Forensic Teleporter Scanner opened.", 2)
+
+	-- Services (re-declared locally for perfect encapsulation)
+	local Workspace = game:GetService("Workspace")
+	local UserInputService = game:GetService("UserInputService")
+	local TweenService = game:GetService("TweenService")
+	local CoreGui = game:GetService("CoreGui")
+
+	-- Configuration
+	local CONFIDENCE_THRESHOLDS = { SCRIPT = 0.4, NAME = 0.6, DATA_PAYLOAD = 1.0 }
+	local SUSPICIOUS_KEYWORDS = { "teleport", "portal", "warp", "door", "secret", "game", "placeid", "gameid", "condo", "hangout" }
+
+	-- GUI Creation
+	local screenGui = Instance.new("ScreenGui")
+	self.State.UI = screenGui -- Store reference in module state
+	screenGui.Name = "TeleporterScannerGui"
+	screenGui.ResetOnSpawn = false
+	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+
+	-- GUI elements are created here... (condensed for brevity, logic is identical to v1.1)
+	local mainFrame = Instance.new("Frame"); mainFrame.Name = "MainFrame"; mainFrame.Size = UDim2.new(0, 350, 0, 450); mainFrame.Position = UDim2.new(0, 10, 0.5, -225); mainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 45); mainFrame.BorderColor3 = Color3.fromRGB(85, 85, 125); mainFrame.ClipsDescendants = true; mainFrame.Parent = screenGui
+	local titleLabel = Instance.new("TextLabel"); titleLabel.Name = "TitleLabel"; titleLabel.Size = UDim2.new(1, 0, 0, 30); titleLabel.BackgroundColor3 = Color3.fromRGB(45, 45, 55); titleLabel.Text = "Forensic Teleporter Scanner"; titleLabel.Font = Enum.Font.SourceSansBold; titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255); titleLabel.Parent = mainFrame
+	local scanButton = Instance.new("TextButton"); scanButton.Name = "ScanButton"; scanButton.Size = UDim2.new(1, -10, 0, 30); scanButton.Position = UDim2.new(0.5, 0, 0, 35); scanButton.AnchorPoint = Vector2.new(0.5, 0); scanButton.BackgroundColor3 = Color3.fromRGB(80, 60, 200); scanButton.Font = Enum.Font.SourceSansBold; scanButton.TextColor3 = Color3.fromRGB(255, 255, 255); scanButton.Text = "Begin Workspace Scan"; scanButton.Parent = mainFrame
+	local clearButton = Instance.new("TextButton"); clearButton.Name = "ClearButton"; clearButton.Size = UDim2.new(1, -10, 0, 20); clearButton.Position = UDim2.new(0.5, 0, 0, 70); clearButton.AnchorPoint = Vector2.new(0.5, 0); clearButton.BackgroundColor3 = Color3.fromRGB(200, 60, 60); clearButton.Font = Enum.Font.SourceSans; clearButton.TextColor3 = Color3.fromRGB(255, 255, 255); clearButton.Text = "Clear Highlights & Results"; clearButton.Parent = mainFrame
+	local resultsFrame = Instance.new("ScrollingFrame"); resultsFrame.Name = "ResultsFrame"; resultsFrame.Size = UDim2.new(1, -10, 1, -95); resultsFrame.Position = UDim2.new(0, 5, 0, 90); resultsFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40); resultsFrame.Parent = mainFrame
+	local listLayout = Instance.new("UIListLayout"); listLayout.SortOrder = Enum.SortOrder.LayoutOrder; listLayout.Padding = UDim.new(0, 3); listLayout.Parent = resultsFrame
+
+	-- Helper Functions
+	local function highlightPart(part, confidence)
+		if self.State.Highlights[part] then return end
+		local highlight = Instance.new("Highlight")
+		highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; highlight.FillColor = Color3.fromHSV(0.66 - (confidence * 0.66), 0.8, 1); highlight.OutlineColor = Color3.fromRGB(255, 255, 255); highlight.FillTransparency = 0.5; highlight.Parent = part
+		self.State.Highlights[part] = highlight
+	end
+
+	local function addResultToList(part, confidence, reason)
+		local resultButton = Instance.new("TextButton")
+		resultButton.Name = part.Name; resultButton.Text = `[{string.format("%.0f", confidence * 100)}%] {part:GetFullName()} ({reason})`; resultButton.Size = UDim2.new(1, 0, 0, 25); resultButton.BackgroundColor3 = Color3.fromHSV(0.66 - (confidence * 0.66), 0.5, 0.5); resultButton.Font = Enum.Font.SourceSans; resultButton.TextXAlignment = Enum.TextXAlignment.Left; resultButton.TextColor3 = Color3.fromRGB(225, 225, 225); resultButton.LayoutOrder = -confidence; resultButton.Parent = resultsFrame
+		resultButton.MouseButton1Click:Connect(function()
+			local camera = Workspace.CurrentCamera; camera.CameraType = Enum.CameraType.Scriptable
+			local targetCFrame = CFrame.new(part.Position + part.CFrame.LookVector * 10, part.Position)
+			local tween = TweenService:Create(camera, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {CFrame = targetCFrame})
+			tween:Play(); tween.Completed:Wait(); camera.CameraType = Enum.CameraType.Custom
+		end)
+	end
+
+	local function clearResults()
+		for _, highlight in pairs(self.State.Highlights) do
+			if highlight and highlight.Parent then highlight:Destroy() end
+		end
+		table.clear(self.State.Highlights)
+		for _, child in ipairs(resultsFrame:GetChildren()) do
+			if child:IsA("TextButton") then child:Destroy() end
+		end
+		scanButton.Text = "Begin Workspace Scan"
+		scanButton.Active = true
+	end
+
+	local function scanWorkspace()
+		self.State.IsScanning = true
+		scanButton.Text = "Scanning... (This may take a moment)"; scanButton.Active = false
+		local partsFound = 0
+		for i, descendant in ipairs(Workspace:GetDescendants()) do
+			if i % 500 == 0 then task.wait() end
+			if descendant:IsA("BasePart") then
+				local confidence, reason = 0, ""
+				if descendant:FindFirstChildWhichIsA("Script") or descendant:FindFirstChildWhichIsA("LocalScript") then
+					confidence, reason = math.max(confidence, CONFIDENCE_THRESHOLDS.SCRIPT), "Has Script"
+				end
+				for _, child in ipairs(descendant:GetChildren()) do
+					for _, keyword in ipairs(SUSPICIOUS_KEYWORDS) do
+						if string.find(string.lower(child.Name), keyword) then
+							confidence, reason = math.max(confidence, CONFIDENCE_THRESHOLDS.DATA_PAYLOAD), `Data: "{child.Name}"`; break
+						end
+					end
+				end
+				for _, keyword in ipairs(SUSPICIOUS_KEYWORDS) do
+					if string.find(string.lower(descendant.Name), keyword) then
+						confidence, reason = math.max(confidence, CONFIDENCE_THRESHOLDS.NAME), reason == "" and "Suspicious Name" or reason; break
+					end
+				end
+				if confidence > 0 then
+					partsFound += 1; highlightPart(descendant, confidence); addResultToList(descendant, confidence, reason)
+				end
+			end
+		end
+		scanButton.Text = `Scan Complete! Found {partsFound} potentials.`
+		DoNotif(`Scan finished. Found {partsFound} points of interest.`, 3)
+		self.State.IsScanning = false
+	end
+
+	-- Button Connections
+	scanButton.MouseButton1Click:Connect(function()
+		if self.State.IsScanning then return end
+		clearResults()
+		task.spawn(scanWorkspace)
+	end)
+	clearButton.MouseButton1Click:Connect(clearResults)
+
+	-- Make GUI Draggable
+	local isDragging, dragStart, startPosition = false, nil, nil
+	titleLabel.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDragging = true; dragStart = input.Position; startPosition = mainFrame.Position; end end)
+	titleLabel.InputChanged:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseMovement and isDragging then local delta = input.Position - dragStart; mainFrame.Position = UDim2.new(startPosition.X.Scale, startPosition.X.Offset + delta.X, startPosition.Y.Scale, startPosition.Y.Offset + delta.Y) end end)
+	UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDragging = false end end)
+
+	-- Finalize
+	screenGui.Parent = CoreGui
+end
+
+RegisterCommand({
+	Name = "tpscan",
+	Aliases = {"teleporterscan", "findtp"},
+	Description = "Toggles a GUI that scans the workspace for potential teleporters."
+}, function(args)
+	Modules.TeleporterScanner:ToggleGUI()
+end)
+
 Modules.ToolPersistence = {
 State = {
 IsEnabled = false,
@@ -4715,6 +5029,472 @@ function Modules.ClientCanary:Initialize()
     end)
 end
 
+
+Modules.TweenClickTP = {
+	State = {
+		IsEnabled = false,
+		Connection = nil,
+		IsTweening = false -- Prevents starting a new tween while one is active
+	},
+	Config = {
+		-- The key to hold while clicking. LeftAlt is a good choice to avoid conflicts.
+		MODIFIER_KEY = Enum.KeyCode.LeftAlt,
+		-- The duration of the camera "dash" animation in seconds.
+		TWEEN_DURATION = 0.25,
+		-- The easing style for a smooth acceleration/deceleration effect.
+		TWEEN_STYLE = Enum.EasingStyle.Quint
+	}
+}
+
+--- [Internal] Executes the camera tween and subsequent teleport.
+function Modules.TweenClickTP:_executeTween(destination)
+	if self.State.IsTweening then return end
+	self.State.IsTweening = true
+
+	-- Services (scoped locally for encapsulation)
+	local TweenService = game:GetService("TweenService")
+	local RunService = game:GetService("RunService")
+	
+	local localPlayer = Players.LocalPlayer
+	local character = localPlayer.Character
+	local hrp = character and character:FindFirstChild("HumanoidRootPart")
+	local camera = Workspace.CurrentCamera
+
+	if not (hrp and camera) then
+		self.State.IsTweening = false
+		return
+	end
+
+	-- 1. Create a temporary, invisible "anchor" part for the camera to follow.
+	local cameraAnchor = Instance.new("Part")
+	cameraAnchor.Size = Vector3.one
+	cameraAnchor.Transparency = 1
+	cameraAnchor.Anchored = true
+	cameraAnchor.CanCollide = false
+	cameraAnchor.CFrame = camera.CFrame
+	cameraAnchor.Parent = Workspace
+
+	-- 2. Define the animation for the anchor part.
+	local tweenInfo = TweenInfo.new(self.Config.TWEEN_DURATION, self.Config.TWEEN_STYLE)
+	-- The camera should arrive looking from its previous orientation towards the destination.
+	local targetCFrame = CFrame.lookAt(destination, destination + camera.CFrame.LookVector)
+	local tween = TweenService:Create(cameraAnchor, tweenInfo, { CFrame = targetCFrame })
+
+	-- 3. Force the camera to follow the anchor part's tween.
+	camera.CameraType = Enum.CameraType.Scriptable
+	local camConnection = RunService.RenderStepped:Connect(function()
+		camera.CFrame = cameraAnchor.CFrame
+	end)
+	
+	tween:Play()
+
+	-- 4. When the animation finishes, perform the actual teleport and clean up resources.
+	tween.Completed:Connect(function()
+		camConnection:Disconnect()
+		hrp.CFrame = CFrame.new(destination) + Vector3.new(0, 3, 0) -- Vertical offset to prevent clipping
+		camera.CameraType = Enum.CameraType.Custom
+		cameraAnchor:Destroy()
+		self.State.IsTweening = false
+	end)
+end
+
+--- Enables the input listener for the TweenClickTP.
+function Modules.TweenClickTP:Enable()
+	if self.State.IsEnabled then return end
+	self.State.IsEnabled = true
+
+	self.State.Connection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if gameProcessed or self.State.IsTweening then return end
+
+		-- Check for the specific hotkey combination (e.g., LeftAlt + Left Click)
+		if UserInputService:IsKeyDown(self.Config.MODIFIER_KEY) and input.UserInputType == Enum.UserInputType.MouseButton1 then
+			local mousePos = UserInputService:GetMouseLocation()
+			local ray = Workspace.CurrentCamera:ViewportPointToRay(mousePos.X, mousePos.Y)
+			
+			local params = RaycastParams.new()
+			params.FilterType = Enum.RaycastFilterType.Blacklist
+			params.FilterDescendantsInstances = { Players.LocalPlayer.Character }
+			
+			local result = Workspace:Raycast(ray.Origin, ray.Direction * 2000, params)
+			
+			if result and result.Position then
+				self:_executeTween(result.Position)
+			end
+		end
+	end)
+
+	DoNotif("Tween ClickTP: [Enabled]. Hold LeftAlt and click to teleport.", 3)
+end
+
+--- Disables the input listener and cleans up.
+function Modules.TweenClickTP:Disable()
+	if not self.State.IsEnabled then return end
+	self.State.IsEnabled = false
+
+	if self.State.Connection then
+		self.State.Connection:Disconnect()
+		self.State.Connection = nil
+	end
+
+	DoNotif("Tween ClickTP: [Disabled].", 2)
+end
+
+--- Toggles the state of the module.
+function Modules.TweenClickTP:Toggle()
+	if self.State.IsEnabled then
+		self:Disable()
+	else
+		self:Enable()
+	end
+end
+
+RegisterCommand({
+	Name = "tweenclicktp",
+	Aliases = {"tctp", "smoothtp", "blinktp"},
+	Description = "Toggles a smooth, camera-animated teleport. Hold Left Alt and click to use."
+}, function(args)
+	Modules.TweenClickTP:Toggle()
+end)
+
+Modules.RageBot = {
+    State = {
+        Enabled = false,
+        AutoAttack = false,
+        AutoCycle = false,
+        HoverDistance = 6,
+        AttackCPS = 10,
+        Target = nil,
+        LerpSpeed = 0.15,
+        BoxReachEnabled = false,
+        BoxReachSize = Vector3.new(15, 15, 15),
+        BoxReachSelectedPart = nil,
+        mainConnection = nil,
+        lastAttackTime = 0,
+        equippedTool = nil,
+        playerList = {},
+        currentTargetIndex = 1,
+        reachSelectionBox = nil,
+        characterConnections = {},
+        isMinimized = false,
+        originalMainWindowSize = UDim2.new(0, 600, 0, 280)
+    },
+    Config = {
+        Theme = {
+            Background = Color3.fromRGB(35, 35, 45),
+            Primary = Color3.fromRGB(25, 25, 35),
+            Accent = Color3.fromRGB(255, 80, 80),
+            Text = Color3.fromRGB(200, 220, 255),
+            TextSecondary = Color3.fromRGB(220, 180, 180),
+            Interactive = Color3.fromRGB(40, 40, 40),
+            Font = Enum.Font.Code,
+            CornerRadius = 8
+        }
+    },
+    GUI = {},
+    Services = {}
+}
+
+function Modules.RageBot:_resetAllToolParts(tool)
+    if not tool then return end
+    for _, d in ipairs(tool:GetDescendants()) do
+        if d:IsA("BasePart") then
+            local originalSizeValue = d:FindFirstChild("OriginalSize")
+            if originalSizeValue then
+                d.Size = originalSizeValue.Value
+                originalSizeValue:Destroy()
+            end
+        end
+    end
+    if self.State.reachSelectionBox then
+        self.State.reachSelectionBox:Destroy()
+        self.State.reachSelectionBox = nil
+    end
+end
+
+function Modules.RageBot:_applyBoxReach()
+    if not self.State.BoxReachEnabled or not self.State.BoxReachSelectedPart or not self.State.BoxReachSelectedPart.Parent then return end
+    local part = self.State.BoxReachSelectedPart
+    if not part:FindFirstChild("OriginalSize") then
+        local sizeValue = Instance.new("Vector3Value", part)
+        sizeValue.Name = "OriginalSize"
+        sizeValue.Value = part.Size
+    end
+    part.Size = self.State.BoxReachSize
+    if self.State.reachSelectionBox then self.State.reachSelectionBox:Destroy() end
+    self.State.reachSelectionBox = Instance.new("SelectionBox")
+    self.State.reachSelectionBox.Adornee = part
+    self.State.reachSelectionBox.LineThickness = 0.02
+    self.State.reachSelectionBox.Color3 = self.Config.Theme.Accent
+    self.State.reachSelectionBox.Parent = part
+end
+
+function Modules.RageBot:_handleMovement(myRoot, targetRoot)
+    local backVector = -targetRoot.CFrame.LookVector
+    local targetPosition = targetRoot.Position + (backVector * self.State.HoverDistance)
+    local newCFrame = CFrame.lookAt(targetPosition, targetRoot.Position)
+    myRoot.CFrame = myRoot.CFrame:Lerp(newCFrame, self.State.LerpSpeed)
+end
+
+function Modules.RageBot:_handleAutoAttack()
+    if not self.State.AutoAttack or not self.State.equippedTool then return end
+    local attackInterval = 1 / self.State.AttackCPS
+    if os.clock() - self.State.lastAttackTime >= attackInterval then
+        self.State.lastAttackTime = os.clock()
+        pcall(function() self.State.equippedTool:Activate() end)
+    end
+end
+
+function Modules.RageBot:_startBot()
+    if self.State.mainConnection then return end
+    self.State.mainConnection = self.Services.RunService.RenderStepped:Connect(function()
+        if not self.State.Enabled or not self.State.Target or not self.State.Target.Character then return end
+        local myCharacter = self.Services.LocalPlayer.Character
+        local targetCharacter = self.State.Target.Character
+        local myRoot = myCharacter and myCharacter:FindFirstChild("HumanoidRootPart")
+        local myHumanoid = myCharacter and myCharacter:FindFirstChildOfClass("Humanoid")
+        local targetRoot = targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart")
+        if not (myRoot and myHumanoid and myHumanoid.Health > 0 and targetRoot) then return end
+        self:_handleMovement(myRoot, targetRoot)
+        self:_handleAutoAttack()
+    end)
+end
+
+function Modules.RageBot:_stopBot()
+    if self.State.mainConnection then
+        self.State.mainConnection:Disconnect()
+        self.State.mainConnection = nil
+    end
+end
+
+function Modules.RageBot:_populatePartList()
+    for _, child in ipairs(self.GUI.partsScroll:GetChildren()) do
+        if child:IsA("TextButton") then child:Destroy() end
+    end
+    self.State.BoxReachSelectedPart = nil
+    if not self.State.equippedTool then return end
+    local selectedButton = nil
+    for _, part in ipairs(self.State.equippedTool:GetDescendants()) do
+        if part:IsA("BasePart") then
+            local btn = Instance.new("TextButton", self.GUI.partsScroll)
+            btn.Size = UDim2.new(1, -10, 0, 25)
+            btn.BackgroundColor3 = self.Config.Theme.Interactive
+            btn.TextColor3 = self.Config.Theme.Text
+            btn.Font = self.Config.Theme.Font
+            btn.Text = part.Name
+            btn.MouseButton1Click:Connect(function()
+                self:_resetAllToolParts(self.State.equippedTool)
+                self.State.BoxReachSelectedPart = part
+                self:_applyBoxReach()
+                if selectedButton then selectedButton.BackgroundColor3 = self.Config.Theme.Interactive end
+                btn.BackgroundColor3 = self.Config.Theme.Accent
+                selectedButton = btn
+            end)
+        end
+    end
+end
+
+function Modules.RageBot:_cleanupConnections()
+    for _, conn in ipairs(self.State.characterConnections) do conn:Disconnect() end
+    self.State.characterConnections = {}
+end
+
+function Modules.RageBot:_trackEquippedTool(character)
+    self:_cleanupConnections()
+    self:_resetAllToolParts(self.State.equippedTool)
+    self.State.equippedTool = character:FindFirstChildOfClass("Tool")
+    self:_populatePartList()
+
+    table.insert(self.State.characterConnections, character.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") then
+            self:_resetAllToolParts(self.State.equippedTool)
+            self.State.equippedTool = child
+            self:_populatePartList()
+        end
+    end))
+    table.insert(self.State.characterConnections, character.ChildRemoved:Connect(function(child)
+        if child == self.State.equippedTool then
+            self:_resetAllToolParts(self.State.equippedTool)
+            self.State.equippedTool = nil
+            self:_populatePartList()
+        end
+    end))
+end
+
+function Modules.RageBot:Toggle()
+    if self.GUI.ScreenGui then
+        self.GUI.ScreenGui.Enabled = not self.GUI.ScreenGui.Enabled
+        if self.GUI.ScreenGui.Enabled then
+            DoNotif("Rage Bot UI Opened.", 1.5)
+        else
+            DoNotif("Rage Bot UI Closed.", 1.5)
+        end
+    end
+end
+
+function Modules.RageBot:Initialize()
+    --// --- Service Loading ---
+    self.Services.RunService = game:GetService("RunService")
+    self.Services.UserInputService = game:GetService("UserInputService")
+    self.Services.Players = game:GetService("Players")
+    self.Services.LocalPlayer = self.Services.Players.LocalPlayer
+    local PlayerGui = self.Services.LocalPlayer:WaitForChild("PlayerGui")
+
+    --// --- UI Creation ---
+    local Theme = self.Config.Theme
+    local function makeUICorner(e, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or Theme.CornerRadius); c.Parent = e end
+
+    self.GUI.ScreenGui = Instance.new("ScreenGui", PlayerGui)
+    self.GUI.ScreenGui.Name = "RageBotMenuGUI_Complete_Module"
+    self.GUI.ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    self.GUI.ScreenGui.ResetOnSpawn = false
+
+    local MainWindow = Instance.new("Frame", self.GUI.ScreenGui); MainWindow.Name = "MainWindow"; MainWindow.Size = self.State.originalMainWindowSize; MainWindow.Position = UDim2.new(0.5, -300, 0.5, -140); MainWindow.BackgroundColor3 = Theme.Background; MainWindow.Active = true; makeUICorner(MainWindow); self.GUI.MainWindow = MainWindow
+    local TopBar = Instance.new("Frame", MainWindow); TopBar.Name = "TopBar"; TopBar.Size = UDim2.new(1, 0, 0, 30); TopBar.BackgroundColor3 = Theme.Primary; makeUICorner(TopBar); self.GUI.TopBar = TopBar
+    local TitleLabel = Instance.new("TextLabel", TopBar); TitleLabel.Name = "TitleLabel"; TitleLabel.Size = UDim2.new(1, -40, 1, 0); TitleLabel.Position = UDim2.new(0, 10, 0, 0); TitleLabel.BackgroundTransparency = 1; TitleLabel.Font = Theme.Font; TitleLabel.Text = "Rage Bot (Complete)"; TitleLabel.TextColor3 = Theme.Text; TitleLabel.TextSize = 16; TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    local MinimizeButton = Instance.new("TextButton", TopBar); MinimizeButton.Name = "MinimizeButton"; MinimizeButton.Size = UDim2.new(0, 24, 0, 24); MinimizeButton.Position = UDim2.new(1, -28, 0.5, -12); MinimizeButton.BackgroundColor3 = Color3.fromRGB(80, 80, 100); MinimizeButton.Font = Theme.Font; MinimizeButton.TextColor3 = Color3.new(1, 1, 1); MinimizeButton.Text = "-"; MinimizeButton.TextSize = 14; makeUICorner(MinimizeButton, 6); self.GUI.MinimizeButton = MinimizeButton
+    local ContentPage = Instance.new("Frame", MainWindow); ContentPage.Name = "ContentPage"; ContentPage.Size = UDim2.new(1, 0, 1, -30); ContentPage.Position = UDim2.new(0, 0, 0, 30); ContentPage.BackgroundTransparency = 1; self.GUI.ContentPage = ContentPage
+    local LeftColumn = Instance.new("Frame", ContentPage); LeftColumn.Name = "LeftColumn"; LeftColumn.Size = UDim2.new(0.5, -10, 1, -20); LeftColumn.Position = UDim2.new(0, 10, 0, 10); LeftColumn.BackgroundTransparency = 1; local LeftLayout = Instance.new("UIListLayout", LeftColumn); LeftLayout.Padding = UDim.new(0, 10); LeftLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    local RightColumn = Instance.new("Frame", ContentPage); RightColumn.Name = "RightColumn"; RightColumn.Size = UDim2.new(0.5, -10, 1, -20); RightColumn.Position = UDim2.new(0.5, 0, 0, 10); RightColumn.BackgroundTransparency = 1; local RightLayout = Instance.new("UIListLayout", RightColumn); RightLayout.Padding = UDim.new(0, 10); RightLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    
+    --// --- UI Logic Connection ---
+    -- Draggable & Minimize Logic
+	do
+		local isDragging = false
+		local dragStart, startPosition
+		TopBar.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				isDragging = true
+				dragStart = input.Position
+				startPosition = MainWindow.Position
+				input.Changed:Connect(function()
+					if input.UserInputState == Enum.UserInputState.End then
+						isDragging = false
+					end
+				end)
+			end
+		end)
+		self.Services.UserInputService.InputChanged:Connect(function(input)
+			if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and isDragging then
+				local delta = input.Position - dragStart
+				MainWindow.Position = UDim2.new(startPosition.X.Scale, startPosition.X.Offset + delta.X, startPosition.Y.Scale, startPosition.Y.Offset + delta.Y)
+			end
+		end)
+	end
+    MinimizeButton.MouseButton1Click:Connect(function()
+        self.State.isMinimized = not self.State.isMinimized
+        ContentPage.Visible = not self.State.isMinimized
+        if self.State.isMinimized then
+            MainWindow.Size = UDim2.new(0, 200, 0, 30)
+            MinimizeButton.Text = "+"
+        else
+            MainWindow.Size = self.State.originalMainWindowSize
+            MinimizeButton.Text = "-"
+        end
+    end)
+    
+    -- Helper functions for creating UI elements
+    local function createToggle(container, text, default, callback)
+        container.Size = UDim2.new(1, 0, 0, 32)
+        container.BackgroundTransparency = 1
+        local button = Instance.new("TextButton", container)
+        button.Size = UDim2.new(1, 0, 1, 0)
+        button.BackgroundColor3 = Theme.Interactive
+        button.TextColor3 = Theme.Text
+        button.Font = Theme.Font
+        button.TextSize = 16
+        makeUICorner(button, 6)
+        local state = default
+        button.Text = text .. ": " .. (state and "ON" or "OFF")
+        button.MouseButton1Click:Connect(function()
+            state = not state
+            button.Text = text .. ": " .. (state and "ON" or "OFF")
+            if callback then callback(state) end
+        end)
+        return button
+    end
+    local function createInput(container, label, default, callback)
+        container.Size = UDim2.new(1, 0, 0, 32)
+        container.BackgroundTransparency = 1
+        local textLabel = Instance.new("TextLabel", container); textLabel.Size = UDim2.new(0.45, 0, 1, 0); textLabel.BackgroundTransparency = 1; textLabel.Text = label .. ":"; textLabel.TextColor3 = Theme.TextSecondary; textLabel.Font = Theme.Font; textLabel.TextSize = 15; textLabel.TextXAlignment = Enum.TextXAlignment.Left
+        local textBox = Instance.new("TextBox", container); textBox.Size = UDim2.new(0.55, 0, 1, 0); textBox.Position = UDim2.new(0.45, 0, 0, 0); textBox.BackgroundColor3 = Theme.Interactive; textBox.TextColor3 = Theme.Text; textBox.Font = Theme.Font; textBox.TextSize = 15; textBox.Text = tostring(default); makeUICorner(textBox, 6)
+        textBox.FocusLost:Connect(function(enterPressed)
+            if enterPressed then
+                textBox.Text = tostring(callback(textBox.Text))
+            else
+                textBox.Text = tostring(callback(nil))
+            end
+        end)
+        return textBox
+    end
+    
+    -- Left Column
+    local playerSelectorContainer=Instance.new("Frame",LeftColumn);playerSelectorContainer.Size=UDim2.new(1,0,0,64);playerSelectorContainer.BackgroundTransparency=1;playerSelectorContainer.LayoutOrder=1
+    local playerSelectorLabel=Instance.new("TextLabel",playerSelectorContainer);playerSelectorLabel.Size=UDim2.new(1,0,0,30);playerSelectorLabel.BackgroundTransparency=1;playerSelectorLabel.Text="Target Player:";playerSelectorLabel.TextColor3=Theme.TextSecondary;playerSelectorLabel.Font=Theme.Font;playerSelectorLabel.TextSize=15;playerSelectorLabel.TextXAlignment=Enum.TextXAlignment.Left
+    local playerDropdownButton=Instance.new("TextButton",playerSelectorContainer);playerDropdownButton.Size=UDim2.new(0.6,-5,0,28);playerDropdownButton.Position=UDim2.new(0,0,0,30);playerDropdownButton.BackgroundColor3=Theme.Interactive;playerDropdownButton.TextColor3=Theme.Text;playerDropdownButton.Font=Theme.Font;playerDropdownButton.TextSize=15;playerDropdownButton.Text="Select Player";makeUICorner(playerDropdownButton,6)
+    local cycleToggleButton=Instance.new("TextButton",playerSelectorContainer);cycleToggleButton.Size=UDim2.new(0.4,0,0,28);cycleToggleButton.Position=UDim2.new(0.6,5,0,30);cycleToggleButton.BackgroundColor3=Theme.Interactive;cycleToggleButton.TextColor3=Theme.Text;cycleToggleButton.Font=Theme.Font;cycleToggleButton.TextSize=16;makeUICorner(cycleToggleButton,6)
+    
+    cycleToggleButton.Text = "Cycle: " .. (self.State.AutoCycle and "ON" or "OFF")
+    cycleToggleButton.MouseButton1Click:Connect(function() self.State.AutoCycle = not self.State.AutoCycle; cycleToggleButton.Text = "Cycle: " .. (self.State.AutoCycle and "ON" or "OFF") end)
+
+    local function refreshPlayerList()
+        self.State.playerList = {}
+        for _, p in ipairs(self.Services.Players:GetPlayers()) do if p ~= self.Services.LocalPlayer then table.insert(self.State.playerList, p) end end
+        if #self.State.playerList > 0 then
+            self.State.currentTargetIndex = math.clamp(self.State.currentTargetIndex, 1, #self.State.playerList)
+            self.State.Target = self.State.playerList[self.State.currentTargetIndex]
+            playerDropdownButton.Text = self.State.Target.Name
+        else
+            self.State.Target = nil
+            playerDropdownButton.Text = "No Players"
+        end
+    end
+    playerDropdownButton.MouseButton1Click:Connect(function()
+        if #self.State.playerList == 0 then return end
+        self.State.currentTargetIndex = (self.State.currentTargetIndex % #self.State.playerList) + 1
+        self.State.Target = self.State.playerList[self.State.currentTargetIndex]
+        playerDropdownButton.Text = self.State.Target.Name
+    end)
+    task.spawn(function()
+        while MainWindow.Parent do
+            task.wait(3)
+            if self.State.AutoCycle and self.State.Enabled and #self.State.playerList > 1 then
+                self.State.currentTargetIndex = (self.State.currentTargetIndex % #self.State.playerList) + 1
+                self.State.Target = self.State.playerList[self.State.currentTargetIndex]
+                playerDropdownButton.Text = self.State.Target.Name
+            end
+        end
+    end)
+    refreshPlayerList()
+    self.Services.Players.PlayerAdded:Connect(refreshPlayerList)
+    self.Services.Players.PlayerRemoving:Connect(refreshPlayerList)
+    
+    createToggle(Instance.new("Frame", LeftColumn), "Rage Bot", self.State.Enabled, function(s) self.State.Enabled = s; if s then self:_startBot() else self:_stopBot() end end).Parent.LayoutOrder = 2
+    createToggle(Instance.new("Frame", LeftColumn), "Auto Attack", self.State.AutoAttack, function(s) self.State.AutoAttack = s end).Parent.LayoutOrder = 3
+    createInput(Instance.new("Frame", LeftColumn), "CPS", self.State.AttackCPS, function(v) if v and tonumber(v) and tonumber(v) > 0 and tonumber(v) <= 30 then self.State.AttackCPS = tonumber(v) end; return self.State.AttackCPS end).Parent.LayoutOrder = 4
+    createInput(Instance.new("Frame", LeftColumn), "Distance", self.State.HoverDistance, function(v) if v and tonumber(v) and tonumber(v) >= 2 and tonumber(v) <= 20 then self.State.HoverDistance = tonumber(v) end; return self.State.HoverDistance end).Parent.LayoutOrder = 5
+
+    -- Right Column
+    local rightTitle=Instance.new("TextLabel",RightColumn);rightTitle.Size=UDim2.new(1,0,0,20);rightTitle.BackgroundTransparency=1;rightTitle.Font=Theme.Font;rightTitle.TextColor3=Theme.Accent;rightTitle.TextSize=18;rightTitle.Text="BoxReach Module";rightTitle.LayoutOrder=0
+    createToggle(Instance.new("Frame", RightColumn), "BoxReach", self.State.BoxReachEnabled, function(s) self.State.BoxReachEnabled = s; if s then self:_applyBoxReach() else self:_resetAllToolParts(self.State.equippedTool) end end).Parent.LayoutOrder = 1
+    createInput(Instance.new("Frame", RightColumn), "Size", "15,15,15", function(t) if t then local n={};for m in string.gmatch(t,"[^,]+")do table.insert(n,tonumber(m))end;if #n==3 and n[1]and n[2]and n[3]then self.State.BoxReachSize=Vector3.new(n[1],n[2],n[3]);self:_applyBoxReach()end end;return string.format("%.1f,%.1f,%.1f",self.State.BoxReachSize.X,self.State.BoxReachSize.Y,self.State.BoxReachSize.Z)end).Parent.LayoutOrder = 2
+    local partsFrame=Instance.new("Frame",RightColumn);partsFrame.LayoutOrder=3;partsFrame.Size=UDim2.new(1,0,0,120);partsFrame.BackgroundTransparency=1
+    local partsLabel=Instance.new("TextLabel",partsFrame);partsLabel.Size=UDim2.new(1,0,0,20);partsLabel.BackgroundTransparency=1;partsLabel.Font=Theme.Font;partsLabel.TextColor3=Theme.TextSecondary;partsLabel.Text="Tool Parts:"
+    self.GUI.partsScroll=Instance.new("ScrollingFrame",partsFrame);self.GUI.partsScroll.Size=UDim2.new(1,0,1,-20);self.GUI.partsScroll.Position=UDim2.new(0,0,0,20);self.GUI.partsScroll.BackgroundColor3=Theme.Primary;self.GUI.partsScroll.BorderSizePixel=0;local partsLayout=Instance.new("UIListLayout",self.GUI.partsScroll);partsLayout.Padding=UDim.new(0,5)
+
+    -- Final Character Setup
+    if self.Services.LocalPlayer.Character then self:_trackEquippedTool(self.Services.LocalPlayer.Character) end
+    self.Services.LocalPlayer.CharacterAdded:Connect(function(char) self:_trackEquippedTool(char) end)
+end
+
+--// --- Command Registration ---
+RegisterCommand({
+    Name = "ragebot",
+    Aliases = {"autokill", "rb"},
+    Description = "Toggles the complete Rage Bot UI."
+}, function()
+    Modules.RageBot:Toggle()
+end)
+
 Modules.ClientFling = {
     State = {
         IsEnabled = false,
@@ -4930,189 +5710,158 @@ RegisterCommand({
 end)
 
 local function createFlingGui()
-	-- This function is self-contained and creates the entire Fling GUI.
-	-- It returns the top-level ScreenGui instance so it can be managed by the module.
-	
-	--// Services (scoped locally)
-	local runService: RunService = game:GetService("RunService")
-	local playersService: Players = game:GetService("Players")
+	--// Services & Player Variables
+	local RunService = game:GetService("RunService")
+	local Players = game:GetService("Players")
+	local UserInputService = game:GetService("UserInputService")
+	local TweenService = game:GetService("TweenService")
+	local LocalPlayer = Players.LocalPlayer
 
 	--// Configuration & State
-	local isToggled: boolean = false
-	local flingPower: number = 1
-	local yVelocityOffset: number = 0.1
-
-	--// Player Variables
-	local localPlayer: Player = playersService.LocalPlayer
-	local playerGui: PlayerGui = localPlayer:WaitForChild("PlayerGui")
+	local isToggled = false
+	local flingPower = 1
+	local yVelocityOffset = 0.1
+	local isMinimized = false
+	local originalSize = UDim2.new(0, 250, 0, 280)
 
 	--// GUI Instances
 	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "ZukaFlingGUI"
+	screenGui.Name = "ZukaFlingGUI_v1_3"
 	screenGui.ResetOnSpawn = false
 	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 
 	local mainFrame = Instance.new("Frame")
-	mainFrame.Size = UDim2.new(0, 250, 0, 280)
+	mainFrame.Size = originalSize
 	mainFrame.Position = UDim2.new(0.5, -125, 0.5, -140)
 	mainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
 	mainFrame.BorderSizePixel = 0
-	mainFrame.Active = true
-	mainFrame.Draggable = true
 	mainFrame.ClipsDescendants = true
 	mainFrame.Parent = screenGui
 	Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
-	Instance.new("UIStroke", mainFrame).Color = Color3.fromRGB(80, 80, 100)
 	
-	local toggleButton = Instance.new("TextButton")
-	toggleButton.Size = UDim2.new(0, 220, 0, 30)
-	toggleButton.Position = UDim2.new(0.5, -110, 0, 10)
-	toggleButton.Text = "Toggle OFF"
-	toggleButton.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
-	toggleButton.TextColor3 = Color3.fromRGB(220, 220, 220)
-	toggleButton.Font = Enum.Font.Gotham
-	toggleButton.Parent = mainFrame
+	-- Animated Rainbow Gradient Border
+	local uiStroke = Instance.new("UIStroke", mainFrame)
+	uiStroke.Color = Color3.fromRGB(80, 80, 100)
+	uiStroke.Thickness = 1.5
+	local rainbowGradient = Instance.new("UIGradient", uiStroke)
+	rainbowGradient.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 0, 0)),
+		ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 127, 0)),
+		ColorSequenceKeypoint.new(0.33, Color3.fromRGB(255, 255, 0)),
+		ColorSequenceKeypoint.new(0.50, Color3.fromRGB(0, 255, 0)),
+		ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
+		ColorSequenceKeypoint.new(0.83, Color3.fromRGB(75, 0, 130)),
+		ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 0, 0))
+	})
+	local rotationSpeed = 60
+	RunService.RenderStepped:Connect(function(deltaTime)
+		if rainbowGradient and rainbowGradient.Parent then
+			rainbowGradient.Rotation = (rainbowGradient.Rotation + rotationSpeed * deltaTime) % 360
+		end
+	end)
+
+	local titleBar = Instance.new("Frame", mainFrame)
+	titleBar.Name = "TitleBar"; titleBar.Size = UDim2.new(1, 0, 0, 30); titleBar.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+	
+	local titleLabel = Instance.new("TextLabel", titleBar)
+	titleLabel.Size = UDim2.new(1, -60, 1, 0); titleLabel.Position = UDim2.new(0, 10, 0, 0); titleLabel.BackgroundTransparency = 1; titleLabel.Font = Enum.Font.GothamSemibold; titleLabel.Text = "Client Flinger"; titleLabel.TextColor3 = Color3.fromRGB(200, 220, 255); titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+	local contentFrame = Instance.new("Frame", mainFrame)
+	contentFrame.Name = "Content"; contentFrame.Size = UDim2.new(1, 0, 1, -30); contentFrame.Position = UDim2.new(0, 0, 0, 30); contentFrame.BackgroundTransparency = 1
+
+	local toggleButton = Instance.new("TextButton", contentFrame)
+	toggleButton.Size = UDim2.new(0, 220, 0, 30); toggleButton.Position = UDim2.new(0.5, -110, 0, 10); toggleButton.Text = "Toggle OFF"; toggleButton.BackgroundColor3 = Color3.fromRGB(50, 50, 65); toggleButton.TextColor3 = Color3.fromRGB(220, 220, 220); toggleButton.Font = Enum.Font.Gotham
 	Instance.new("UICorner", toggleButton).CornerRadius = UDim.new(0, 4)
 
-	local powerLabel = Instance.new("TextLabel")
-	powerLabel.Size = UDim2.new(0, 70, 0, 35)
-	powerLabel.Position = UDim2.new(0.5, -35, 0, 50)
-	powerLabel.Text = tostring(flingPower)
-	powerLabel.TextScaled = true
-	powerLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-	powerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-	powerLabel.Font = Enum.Font.GothamBold
-	powerLabel.Parent = mainFrame
+	local powerLabel = Instance.new("TextLabel", contentFrame)
+	powerLabel.Size = UDim2.new(0, 70, 0, 35); powerLabel.Position = UDim2.new(0.5, -35, 0, 50); powerLabel.Text = tostring(flingPower); powerLabel.TextScaled = true; powerLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 55); powerLabel.TextColor3 = Color3.fromRGB(255, 255, 255); powerLabel.Font = Enum.Font.GothamBold
 	Instance.new("UICorner", powerLabel).CornerRadius = UDim.new(0, 4)
 
-	local increaseButton = Instance.new("TextButton")
-	increaseButton.Size = UDim2.new(0, 40, 0, 40)
-	increaseButton.Position = UDim2.new(0.5, 50, 0, 95)
-	increaseButton.Text = "+"
-	increaseButton.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
-	increaseButton.TextColor3 = Color3.fromRGB(220, 220, 220)
-	increaseButton.Font = Enum.Font.GothamBold
-	increaseButton.TextSize = 24
-	increaseButton.Parent = mainFrame
+	local increaseButton = Instance.new("TextButton", contentFrame)
+	increaseButton.Size = UDim2.new(0, 40, 0, 40); increaseButton.Position = UDim2.new(0.5, 50, 0, 95); increaseButton.Text = "+"; increaseButton.BackgroundColor3 = Color3.fromRGB(50, 50, 65); increaseButton.TextColor3 = Color3.fromRGB(220, 220, 220); increaseButton.Font = Enum.Font.GothamBold; increaseButton.TextSize = 24
 	Instance.new("UICorner", increaseButton).CornerRadius = UDim.new(0, 4)
 
-	local decreaseButton = Instance.new("TextButton")
-	decreaseButton.Size = UDim2.new(0, 40, 0, 40)
-	decreaseButton.Position = UDim2.new(0.5, -85, 0, 95)
-	decreaseButton.Text = "-"
-	decreaseButton.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
-	decreaseButton.TextColor3 = Color3.fromRGB(220, 220, 220)
-	decreaseButton.Font = Enum.Font.GothamBold
-	decreaseButton.TextSize = 24
-	decreaseButton.Parent = mainFrame
+	local decreaseButton = Instance.new("TextButton", contentFrame)
+	decreaseButton.Size = UDim2.new(0, 40, 0, 40); decreaseButton.Position = UDim2.new(0.5, -85, 0, 95); decreaseButton.Text = "-"; decreaseButton.BackgroundColor3 = Color3.fromRGB(50, 50, 65); decreaseButton.TextColor3 = Color3.fromRGB(220, 220, 220); decreaseButton.Font = Enum.Font.GothamBold; decreaseButton.TextSize = 24
 	Instance.new("UICorner", decreaseButton).CornerRadius = UDim.new(0, 4)
-	
-	local function createPresetButton(text, power, yPos)
-		local button = Instance.new("TextButton")
-		button.Size = UDim2.new(0, 220, 0, 35)
-		button.Position = UDim2.new(0.5, -110, 0, yPos)
-		button.Text = text
-		button.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
-		button.TextColor3 = Color3.fromRGB(220, 220, 220)
-		button.Font = Enum.Font.Gotham
-		button.Parent = mainFrame
-		Instance.new("UICorner", button).CornerRadius = UDim.new(0, 4)
-		button.MouseButton1Click:Connect(function()
-			flingPower = power
-			powerLabel.Text = tostring(flingPower)
-		end)
-		return button
-	end
 
+	local function createPresetButton(text, power, yPos)
+		local button = Instance.new("TextButton", contentFrame)
+		button.Size = UDim2.new(0, 220, 0, 35); button.Position = UDim2.new(0.5, -110, 0, yPos); button.Text = text; button.BackgroundColor3 = Color3.fromRGB(50, 50, 65); button.TextColor3 = Color3.fromRGB(220, 220, 220); button.Font = Enum.Font.Gotham
+		Instance.new("UICorner", button).CornerRadius = UDim.new(0, 4)
+		button.MouseButton1Click:Connect(function() flingPower = power; powerLabel.Text = tostring(flingPower) end)
+	end
 	createPresetButton("Normal Fling", 1, 140)
 	createPresetButton("Super Fling", 3, 180)
 	createPresetButton("Ultra Fling", 5, 220)
 
-	-- Frame Controls
-	local closeButton = Instance.new("TextButton")
-	closeButton.Size = UDim2.new(0, 20, 0, 20)
-	closeButton.Position = UDim2.new(1, -10, 0, 5)
-	closeButton.Text = "X"
-	closeButton.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
-	closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-	closeButton.Font = Enum.Font.GothamBold
-	closeButton.Parent = mainFrame
+	local closeButton = Instance.new("TextButton", titleBar)
+	closeButton.Size = UDim2.new(0, 24, 0, 24); closeButton.AnchorPoint = Vector2.new(1, 0.5); closeButton.Position = UDim2.new(1, -5, 0.5, 0); closeButton.Text = "X"; closeButton.BackgroundColor3 = Color3.fromRGB(200, 80, 80); closeButton.TextColor3 = Color3.fromRGB(255, 255, 255); closeButton.Font = Enum.Font.GothamBold
 	Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 4)
+	
+	local minimizeButton = Instance.new("TextButton", titleBar)
+	minimizeButton.Size = UDim2.new(0, 24, 0, 24); minimizeButton.AnchorPoint = Vector2.new(1, 0.5); minimizeButton.Position = UDim2.new(1, -35, 0.5, 0); minimizeButton.Text = "-"; minimizeButton.BackgroundColor3 = Color3.fromRGB(80, 80, 100); minimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255); minimizeButton.Font = Enum.Font.GothamBold; minimizeButton.TextSize = 20
+	Instance.new("UICorner", minimizeButton).CornerRadius = UDim.new(0, 4)
 
-	--// Functions
-	local function updatePowerLabel()
-		powerLabel.Text = tostring(flingPower)
-	end
-
-	--// Event Connections
-	toggleButton.MouseButton1Click:Connect(function()
-		isToggled = not isToggled
-		toggleButton.Text = if isToggled then "Toggle ON" else "Toggle OFF"
-		toggleButton.TextColor3 = if isToggled then Color3.fromRGB(0, 255, 0) else Color3.fromRGB(220, 220, 220)
+	--// --- Event Connections ---
+	minimizeButton.MouseButton1Click:Connect(function()
+		isMinimized = not isMinimized; contentFrame.Visible = not isMinimized; minimizeButton.Text = isMinimized and "+" or "-"
+		local targetSize = isMinimized and UDim2.new(0, 250, 0, 30) or originalSize
+		TweenService:Create(mainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Size = targetSize}):Play()
 	end)
 
-	increaseButton.MouseButton1Click:Connect(function()
-		flingPower += 1
-		updatePowerLabel()
+	titleBar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			local dragStart, startPos = input.Position, mainFrame.Position; local moveConn, endConn
+			-- [FIXED] Corrected typo from UserInput-Type to UserInputType
+			moveConn = UserInputService.InputChanged:Connect(function(moveInput) if moveInput.UserInputType == Enum.UserInputType.MouseMovement then local delta = moveInput.Position - dragStart; mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y) end end)
+			endConn = UserInputService.InputEnded:Connect(function(endInput) if endInput.UserInputType == Enum.UserInputType.MouseButton1 then moveConn:Disconnect(); endConn:Disconnect() end end)
+		end
 	end)
 
-	decreaseButton.MouseButton1Click:Connect(function()
-		flingPower = math.max(1, flingPower - 1)
-		updatePowerLabel()
-	end)
+	closeButton.MouseButton1Click:Connect(function() screenGui:Destroy() end)
+	toggleButton.MouseButton1Click:Connect(function() isToggled = not isToggled; toggleButton.Text = if isToggled then "Toggle ON" else "Toggle OFF"; toggleButton.TextColor3 = if isToggled then Color3.fromRGB(0, 255, 0) else Color3.fromRGB(220, 220, 220) end)
+	increaseButton.MouseButton1Click:Connect(function() flingPower += 1; powerLabel.Text = tostring(flingPower) end)
+	decreaseButton.MouseButton1Click:Connect(function() flingPower = math.max(1, flingPower - 1); powerLabel.Text = tostring(flingPower) end)
 
-	closeButton.MouseButton1Click:Connect(function()
-		screenGui:Destroy()
-	end)
-
-	--// Core Fling Logic
-	runService.Heartbeat:Connect(function()
-		if not isToggled or not screenGui.Parent then return end -- Stop if toggled off or GUI is destroyed
-
-		local character: Model? = localPlayer.Character
-		local humanoidRootPart: BasePart? = character and character:FindFirstChild("HumanoidRootPart")
-
-		if humanoidRootPart then
-			local originalVelocity: Vector3 = humanoidRootPart.Velocity
-			humanoidRootPart.Velocity = (originalVelocity * flingPower * 100) + Vector3.new(0, flingPower * 100, 0)
-			runService.RenderStepped:Wait()
-			humanoidRootPart.Velocity = originalVelocity
-			runService.Stepped:Wait()
-			humanoidRootPart.Velocity = originalVelocity + Vector3.new(0, yVelocityOffset, 0)
-			yVelocityOffset = -yVelocityOffset
+	--// --- Core Fling Logic (Unchanged) ---
+	RunService.Heartbeat:Connect(function()
+		if not (isToggled and screenGui.Parent) then return end
+		local character, hrp = LocalPlayer.Character, nil; if character then hrp = character:FindFirstChild("HumanoidRootPart") end
+		if hrp then
+			local originalVelocity = hrp.Velocity; hrp.Velocity = (originalVelocity * flingPower * 100) + Vector3.new(0, flingPower * 100, 0); RunService.RenderStepped:Wait(); hrp.Velocity = originalVelocity; RunService.Stepped:Wait(); hrp.Velocity = originalVelocity + Vector3.new(0, yVelocityOffset, 0); yVelocityOffset = -yVelocityOffset
 		end
 	end)
 	
-	-- Final Parenting and return
-	screenGui.Parent = CoreGui
+	screenGui.Parent = game:GetService("CoreGui")
 	return screenGui
 end
 
-Modules.FlingGUI = {
-    State = {
-        UI = nil -- This will hold the reference to the ScreenGui
-    }
-}
 
+Modules.FlingGUI = {
+	State = {
+		UI = nil -- This will hold the reference to the ScreenGui
+	}
+}
 function Modules.FlingGUI:Toggle()
-    -- Check if the UI exists and is currently in the game hierarchy
-    if self.State.UI and self.State.UI.Parent then
-        self.State.UI:Destroy()
-        self.State.UI = nil
-        DoNotif("Fling GUI closed.", 2)
-    else
-        -- The createFlingGui function returns the main ScreenGui instance.
-        self.State.UI = createFlingGui()
-        DoNotif("Fling GUI opened.", 2)
-    end
+	-- Check if the UI exists and is currently in the game hierarchy
+	if self.State.UI and self.State.UI.Parent then
+		self.State.UI:Destroy()
+		self.State.UI = nil
+		DoNotif("Fling GUI closed.", 2)
+	else
+		-- The createFlingGui function returns the main ScreenGui instance.
+		self.State.UI = createFlingGui()
+		DoNotif("Fling GUI opened.", 2)
+	end
 end
 
 RegisterCommand({
-    Name = "flinggui",
-    Aliases = {"fgui", "flingui"},
-    Description = "Toggles the client-sided character fling GUI."
+	Name = "flinggui",
+	Aliases = {"fgui", "flingui"},
+	Description = "Toggles the client-sided character fling GUI."
 }, function()
-    Modules.FlingGUI:Toggle()
+	Modules.FlingGUI:Toggle()
 end)
 
 Modules.SuperPush = {
@@ -5909,17 +6658,13 @@ end)
 RegisterCommand({Name = "wallwalk", Aliases = {"ww"}, Description = "Walk On Walls"}, function()
 loadstringCmd("https://raw.githubusercontent.com/ltseverydayyou/uuuuuuu/main/WallWalk.lua", "Loaded!")
 end)
-RegisterCommand({Name = "ragebot", Aliases = {}, Description = "Attachs behind a player and auto attacks, remains out of view."}, function()
-loadstringCmd("https://raw.githubusercontent.com/zukatechdevelopment-ux/thingsandstuff/refs/heads/main/ragebot.lua", "Script 2 Activated!")
-end)
 RegisterCommand({Name = "dex", Aliases = {}, Description = "Xeno might fucking die, caution."}, function()
-loadstringCmd("https://raw.githubusercontent.com/zukatechdevelopment-ux/luaprojectse3/refs/heads/main/CustomDex.lua", "Dex Loading.")
+loadstringCmd("https://raw.githubusercontent.com/zukatechdevelopment-ux/luaprojectse3/refs/heads/main/CustomDex.lua", "Dex.")
 end)
 RegisterCommand({Name = "funbox", Aliases = {"fbox"}, Description = "Loads the Original Zuka Hub"}, function() loadstringCmd("https://raw.githubusercontent.com/bloxtech1/luaprojects2/refs/heads/main/ZukasFunBox.lua", "Loading Zuka's FunBox...") end)
 RegisterCommand({Name = "zukahub", Aliases = {"zuka"}, Description = "Loads the Zuka Hub"}, function() loadstringCmd("https://raw.githubusercontent.com/zukatechdevelopment-ux/thingsandstuff/refs/heads/main/ZukaHub.lua", "Loading Zuka's Hub...") end)
 RegisterCommand({Name = "stopanimations", Aliases = {"stopa"}, Description = "Stops local animations"}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/lua3/refs/heads/main/noanimations.lua", "Loading...") end)
 RegisterCommand({Name = "stats", Aliases = {}, Description = "Edit and lock your properties."}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/editstats.txt", "Loading Stats..") end)
-RegisterCommand({Name = "desync", Aliases = {"invis", "astral"}, Description = "Desyncs local player, making them invisable."}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/astralform.txt", "Leaving Physical Body..") end)
 RegisterCommand({Name = "zgui", Aliases = {"upd3", "zui"}, Description = "For Zombie Game upd3"}, function() loadstringCmd("https://raw.githubusercontent.com/zukatechdevelopment-ux/luaprojectse3/refs/heads/main/ZGUI.txt", "Loaded GUI") end)
 RegisterCommand({Name = "swordbot", Aliases = {"sf", "sfbot"}, Description = "Auto Sword Fighter, use E and R"}, function() loadstringCmd("https://raw.githubusercontent.com/bloxtech1/luaprojects2/refs/heads/main/swordnpc", "Bot loaded.") end)
 RegisterCommand({Name = "reload", Aliases = {"update", "exec"}, Description = "Reloads and re-executes the admin script from the GitHub source."}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/Main.lua", "Reloading admin from source...") end)
