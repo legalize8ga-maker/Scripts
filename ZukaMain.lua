@@ -1773,10 +1773,10 @@ function Modules.CommandBar:Initialize()
     textBox.AnchorPoint = Vector2.new(0.5, 0.5)
     textBox.BackgroundTransparency = 1
     textBox.Font = Theme.MainFont
-    textBox.PlaceholderText = "..."
+    textBox.PlaceholderText = " "
     textBox.PlaceholderColor3 = Theme.PlaceholderTextColor
     textBox.TextColor3 = Theme.InputTextColor
-    textBox.TextSize = 18
+    textBox.TextSize = 15
     textBox.ClearTextOnFocus = true
     textBox.Parent = inputFrame
     self.State.TextBox = textBox
@@ -1892,54 +1892,148 @@ if State.Connection then State.Connection:Disconnect(); State.Connection = nil e
     DoNotif("Mouse Unlock Disabled", 2)
 end
 end)
-Modules.ESP = { State = { IsActive = false, Connections = {}, TrackedPlayers = {} } }
-function Modules.ESP:Toggle()
-    self.State.IsActive = not self.State.IsActive
-    if self.State.IsActive then
-        local function createEspForPlayer(player)
-        if player == LocalPlayer then return end
-            local function setupVisuals(character)
-            if self.State.TrackedPlayers[player] then self.State.TrackedPlayers[player].Highlight:Destroy(); self.State.TrackedPlayers[player].Billboard:Destroy() end
-                local head = character:WaitForChild("Head", 2)
-                if not head then return end
-                    local highlight = Instance.new("Highlight", character)
-                    highlight.FillColor, highlight.OutlineColor = Color3.fromRGB(255, 60, 60), Color3.fromRGB(255, 255, 255)
-                    highlight.FillTransparency, highlight.OutlineTransparency = 0.8, 0.3
-                    local billboard = Instance.new("BillboardGui", head)
-                    billboard.Adornee, billboard.AlwaysOnTop, billboard.Size = head, true, UDim2.new(0, 200, 0, 50)
-                    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+Modules.ESP = {
+    State = {
+        PlayersEnabled = false,
+        NpcsEnabled = false,
+        Connections = {},
+        TrackedPlayers = setmetatable({}, {__mode="k"}),
+        TrackedNpcs = setmetatable({}, {__mode="k"})
+    }
+}
+
+function Modules.ESP:_cleanup()
+    for _, conn in pairs(self.State.Connections) do conn:Disconnect() end
+    for _, data in pairs(self.State.TrackedPlayers) do pcall(function() data.Highlight:Destroy() end); pcall(function() data.Billboard:Destroy() end) end
+    for _, data in pairs(self.State.TrackedNpcs) do pcall(function() data.Highlight:Destroy() end); pcall(function() data.Billboard:Destroy() end) end
+    table.clear(self.State.Connections)
+    table.clear(self.State.TrackedPlayers)
+    table.clear(self.State.TrackedNpcs)
+end
+
+function Modules.ESP:_createPlayerEsp(player)
+    if player == LocalPlayer or self.State.TrackedPlayers[player] then return end
+    local function setupVisuals(character)
+        if self.State.TrackedPlayers[player] then self.State.TrackedPlayers[player].Highlight:Destroy(); self.State.TrackedPlayers[player].Billboard:Destroy() end
+        local head = character:WaitForChild("Head", 2)
+        if not head then return end
+        local highlight = Instance.new("Highlight", character)
+        highlight.FillColor, highlight.OutlineColor = Color3.fromRGB(255, 60, 60), Color3.fromRGB(255, 255, 255)
+        highlight.FillTransparency, highlight.OutlineTransparency = 0.8, 0.3
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        local billboard = Instance.new("BillboardGui", head)
+        billboard.Adornee, billboard.AlwaysOnTop, billboard.Size = head, true, UDim2.new(0, 200, 0, 50)
+        billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+        local nameLabel = Instance.new("TextLabel", billboard)
+        nameLabel.Size, nameLabel.Text, nameLabel.BackgroundTransparency = UDim2.new(1, 0, 0.5, 0), player.Name, 1
+        nameLabel.Font, nameLabel.TextSize, nameLabel.TextColor3 = Enum.Font.Code, 18, Color3.fromRGB(255, 255, 255)
+        local teamLabel = Instance.new("TextLabel", billboard)
+        teamLabel.Size, teamLabel.Position, teamLabel.BackgroundTransparency = UDim2.new(1, 0, 0.5, 0), UDim2.new(0, 0, 0.5, 0), 1
+        teamLabel.Font, teamLabel.TextSize = Enum.Font.Code, 14
+        teamLabel.Text = player.Team and player.Team.Name or "No Team"
+        teamLabel.TextColor3 = player.Team and player.Team.TeamColor.Color or Color3.fromRGB(200, 200, 200)
+        self.State.TrackedPlayers[player] = { Highlight = highlight, Billboard = billboard, CharacterAddedConn = nil }
+    end
+    if player.Character then setupVisuals(player.Character) end
+    local conn = player.CharacterAdded:Connect(setupVisuals)
+    if self.State.TrackedPlayers[player] then self.State.TrackedPlayers[player].CharacterAddedConn = conn end
+end
+
+function Modules.ESP:_removePlayerEsp(player)
+    if not self.State.TrackedPlayers[player] then return end
+    pcall(function() self.State.TrackedPlayers[player].Highlight:Destroy() end)
+    pcall(function() self.State.TrackedPlayers[player].Billboard:Destroy() end)
+    if self.State.TrackedPlayers[player].CharacterAddedConn then self.State.TrackedPlayers[player].CharacterAddedConn:Disconnect() end
+    self.State.TrackedPlayers[player] = nil
+end
+
+function Modules.ESP:_onHeartbeat()
+    if not self.State.NpcsEnabled then return end
+    
+    local myRoot = LocalPlayer.Character and LocalPlayer.Character.PrimaryPart
+    
+    -- Update existing NPCs, remove dead/gone ones
+    for model, data in pairs(self.State.TrackedNpcs) do
+        if not model.Parent or data.Humanoid.Health <= 0 then
+            pcall(function() data.Highlight:Destroy() end)
+            pcall(function() data.Billboard:Destroy() end)
+            self.State.TrackedNpcs[model] = nil
+        elseif myRoot and data.InfoLabel then
+            local dist = math.floor((myRoot.Position - data.RootPart.Position).Magnitude)
+            data.InfoLabel.Text = string.format("HP: %.0f | Dist: %dm", data.Humanoid.Health, dist)
+        end
+    end
+    
+    -- Scan for new NPCs
+    for _, model in ipairs(Workspace:GetChildren()) do
+        if model:IsA("Model") and not self.State.TrackedNpcs[model] then
+            if not Players:GetPlayerFromCharacter(model) then
+                local humanoid = model:FindFirstChildOfClass("Humanoid")
+                local rootPart = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart")
+                if humanoid and rootPart and humanoid.Health > 0 then
+                    local highlight = Instance.new("Highlight", model)
+                    highlight.FillColor, highlight.OutlineColor = Color3.fromRGB(255, 255, 0), Color3.fromRGB(0, 0, 0)
+                    highlight.FillTransparency, highlight.OutlineTransparency = 0.7, 0.4
+                    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    local billboard = Instance.new("BillboardGui", rootPart)
+                    billboard.Adornee, billboard.AlwaysOnTop, billboard.Size = rootPart, true, UDim2.fromOffset(150, 40)
+                    billboard.StudsOffset = Vector3.new(0, 2, 0)
                     local nameLabel = Instance.new("TextLabel", billboard)
-                    nameLabel.Size, nameLabel.Text, nameLabel.BackgroundTransparency = UDim2.new(1, 0, 0.5, 0), player.Name, 1
-                    nameLabel.Font, nameLabel.TextSize, nameLabel.TextColor3 = Enum.Font.Code, 18, Color3.fromRGB(255, 255, 255)
-                    local teamLabel = Instance.new("TextLabel", billboard)
-                    teamLabel.Size, teamLabel.Position, teamLabel.BackgroundTransparency = UDim2.new(1, 0, 0.5, 0), UDim2.new(0, 0, 0.5, 0), 1
-                    teamLabel.Font, teamLabel.TextSize = Enum.Font.Code, 14
-                    teamLabel.Text = player.Team and player.Team.Name or "No Team"
-                    teamLabel.TextColor3 = player.Team and player.Team.TeamColor.Color or Color3.fromRGB(200, 200, 200)
-                    self.State.TrackedPlayers[player] = { Highlight = highlight, Billboard = billboard }
-                end
-                if player.Character then setupVisuals(player.Character) end
-                    player.CharacterAdded:Connect(setupVisuals)
-                end
-                local function removeEspForPlayer(player)
-                if self.State.TrackedPlayers[player] then
-                    pcall(function() self.State.TrackedPlayers[player].Highlight:Destroy() end)
-                    pcall(function() self.State.TrackedPlayers[player].Billboard:Destroy() end)
-                    self.State.TrackedPlayers[player] = nil
+                    nameLabel.Size, nameLabel.Text, nameLabel.Font, nameLabel.TextSize, nameLabel.TextColor3, nameLabel.BackgroundTransparency = UDim2.new(1, 0, 0.5, 0), model.Name, Enum.Font.Code, 16, Color3.fromRGB(255, 255, 255), 1
+                    local infoLabel = Instance.new("TextLabel", billboard)
+                    infoLabel.Size, infoLabel.Position, infoLabel.Font, infoLabel.TextSize, infoLabel.TextColor3, infoLabel.BackgroundTransparency = UDim2.new(1, 0, 0.5, 0), UDim2.new(0, 0, 0.5, 0), Enum.Font.Code, 14, Color3.fromRGB(200, 200, 200), 1
+                    self.State.TrackedNpcs[model] = { Highlight = highlight, Billboard = billboard, Humanoid = humanoid, RootPart = rootPart, InfoLabel = infoLabel }
                 end
             end
-            for _, player in ipairs(Players:GetPlayers()) do createEspForPlayer(player) end
-                self.State.Connections.PlayerAdded = Players.PlayerAdded:Connect(createEspForPlayer)
-                self.State.Connections.PlayerRemoving = Players.PlayerRemoving:Connect(removeEspForPlayer)
-            else
-            for _, conn in pairs(self.State.Connections) do conn:Disconnect() end; self.State.Connections = {}
-                for _, data in pairs(self.State.TrackedPlayers) do pcall(function() data.Highlight:Destroy() end); pcall(function() data.Billboard:Destroy() end) end; self.State.TrackedPlayers = {}
-                end
-                DoNotif("ESP " .. (self.State.IsActive and "Enabled" or "Disabled"), 2)
+        end
+    end
+end
+
+function Modules.ESP:Toggle(mode)
+    mode = (mode or "players"):lower()
+
+    if mode == "players" or mode == "p" then
+        self.State.PlayersEnabled = not self.State.PlayersEnabled
+        DoNotif("Player ESP: " .. (self.State.PlayersEnabled and "ENABLED" or "DISABLED"), 2)
+        if self.State.PlayersEnabled then
+            for _, player in ipairs(Players:GetPlayers()) do self:_createPlayerEsp(player) end
+            self.State.Connections.PlayerAdded = Players.PlayerAdded:Connect(function(p) self:_createPlayerEsp(p) end)
+            self.State.Connections.PlayerRemoving = Players.PlayerRemoving:Connect(function(p) self:_removePlayerEsp(p) end)
+        else
+            if self.State.Connections.PlayerAdded then self.State.Connections.PlayerAdded:Disconnect() end
+            if self.State.Connections.PlayerRemoving then self.State.Connections.PlayerRemoving:Disconnect() end
+            for player, _ in pairs(self.State.TrackedPlayers) do self:_removePlayerEsp(player) end
+        end
+    elseif mode == "npcs" or mode == "npc" or mode == "ai" then
+        self.State.NpcsEnabled = not self.State.NpcsEnabled
+        DoNotif("NPC ESP: " .. (self.State.NpcsEnabled and "ENABLED" or "DISABLED"), 2)
+        if not self.State.NpcsEnabled then
+            for model, _ in pairs(self.State.TrackedNpcs) do
+                pcall(function() self.State.TrackedNpcs[model].Highlight:Destroy() end)
+                pcall(function() self.State.TrackedNpcs[model].Billboard:Destroy() end)
+                self.State.TrackedNpcs[model] = nil
             end
-            RegisterCommand({Name = "esp", Aliases = {}, Description = "Toggles player ESP."}, function(args)
-            Modules.ESP:Toggle(args)
-        end)
+        end
+    end
+
+    -- Manage the master Heartbeat connection
+    local isAnyEspActive = self.State.PlayersEnabled or self.State.NpcsEnabled
+    if isAnyEspActive and not self.State.Connections.Heartbeat then
+        self.State.Connections.Heartbeat = RunService.Heartbeat:Connect(function() self:_onHeartbeat() end)
+    elseif not isAnyEspActive and self.State.Connections.Heartbeat then
+        self.State.Connections.Heartbeat:Disconnect()
+        self.State.Connections.Heartbeat = nil
+    end
+end
+
+RegisterCommand({
+    Name = "esp",
+    Aliases = {},
+    Description = "Toggles ESP. Usage: esp [players|npcs]"
+}, function(args)
+    Modules.ESP:Toggle(args[1])
+end)
+
         Modules.ClickTP = { State = { IsActive = false, Connection = nil } };
         function Modules.ClickTP:Toggle()
             self.State.IsActive = not self.State.IsActive
@@ -3383,6 +3477,405 @@ function Modules.NoclipStabilizer:Disable()
     Modules.NoclipStabilizer:Enable()
 end
 end)
+
+Modules.AntiReset = {
+    State = {
+        IsEnabled = false,
+        CharacterConnections = {}
+    }
+}
+
+--- Enables the anti-reset system.
+function Modules.AntiReset:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+
+    local function applyAntiReset(character)
+        if not character then return end
+        local humanoid = character:WaitForChild("Humanoid", 2)
+        local hrp = character:WaitForChild("HumanoidRootPart", 2)
+        if not (humanoid and hrp) then return end
+
+        for _, connection in pairs(self.State.CharacterConnections) do
+            if connection then connection:Disconnect() end
+        end
+        table.clear(self.State.CharacterConnections)
+
+        local isResetting = false
+
+        -- [VECTOR 1] Health-Based Reset Protection
+        self.State.CharacterConnections.HealthChanged = humanoid:GetPropertyChangedSignal("Health"):Connect(function()
+            if humanoid.Health <= 0 and not isResetting then
+                isResetting = true
+                humanoid.Health = humanoid.MaxHealth
+                isResetting = false
+            end
+        end)
+
+        -- [VECTOR 2] Void Reset Protection
+        local lastSafePosition = hrp.Position
+        local fallenPartsHeight = Workspace.FallenPartsDestroyHeight
+
+        self.State.CharacterConnections.Heartbeat = RunService.Heartbeat:Connect(function()
+            if not hrp or not hrp.Parent then return end
+
+            if hrp.Position.Y < fallenPartsHeight then
+                hrp.CFrame = CFrame.new(lastSafePosition)
+                hrp.Velocity = Vector3.new(0, 0, 0)
+            elseif humanoid.FloorMaterial ~= Enum.Material.Air then
+                lastSafePosition = hrp.Position
+            end
+        end)
+    end
+
+    if LocalPlayer.Character then
+        applyAntiReset(LocalPlayer.Character)
+    end
+
+    self.State.CharacterConnections.Added = LocalPlayer.CharacterAdded:Connect(applyAntiReset)
+    
+    DoNotif("Anti-Reset: ENABLED.", 2)
+end
+
+--- Disables the anti-reset system and cleans up all resources.
+function Modules.AntiReset:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+    
+    for _, connection in pairs(self.State.CharacterConnections) do
+        if connection then connection:Disconnect() end
+    end
+    table.clear(self.State.CharacterConnections)
+
+    DoNotif("Anti-Reset: DISABLED.", 2)
+end
+
+--- Toggles the anti-reset state.
+function Modules.AntiReset:Toggle()
+    if self.State.IsEnabled then
+        self:Disable()
+    else
+        self:Enable()
+    end
+end
+
+Modules.ForceEquip = {
+    State = {
+        IsRemoteFunction = false,
+        RemotePath = nil
+    },
+    Dependencies = {"Players"}
+}
+
+-- [Internal] A robust function to find an instance from a string path.
+function Modules.ForceEquip:_getInstanceFromPath(path)
+    local current = game
+    for component in string.gmatch(path, "[^%.]+") do
+        if string.find(component, ":GetService") then
+            local serviceName = component:match("'(.-)'") or component:match('"(.-)"')
+            if serviceName then
+                current = current:GetService(serviceName)
+            else
+                return nil
+            end
+        else
+            if current then
+                current = current:FindFirstChild(component)
+            else
+                return nil
+            end
+        end
+    end
+    return current
+end
+
+-- [Internal] The original execution logic for force equipping a single weapon.
+function Modules.ForceEquip:Execute(weaponName)
+    if not self.State.RemotePath then
+        return DoNotif("Error: Remote path has not been set. Use ;setremotepath first.", 3)
+    end
+    if not weaponName then
+        return DoNotif("Usage: ;forceequip <WeaponName>", 3)
+    end
+
+    -- For simplicity, this function now just calls the new generic one.
+    self:ExecuteWithArgs({weaponName})
+end
+
+--- [NEW] Executes a fire/invoke on the configured remote with a variable number of arguments.
+-- @param customArgs <table> An array of arguments to be sent.
+function Modules.ForceEquip:ExecuteWithArgs(customArgs)
+    if not self.State.RemotePath then
+        return DoNotif("Error: Remote path has not been set. Use ;setremotepath first.", 3)
+    end
+
+    local remote = self:_getInstanceFromPath(self.State.RemotePath)
+    if not remote then
+        return DoNotif("Error: Remote not found at path: " .. self.State.RemotePath, 4)
+    end
+
+    -- Argument processing: Converts strings to their likely intended types.
+    local fireArgs = {}
+    for _, argStr in ipairs(customArgs or {}) do
+        if tonumber(argStr) then
+            table.insert(fireArgs, tonumber(argStr))
+        elseif argStr:lower() == "true" then
+            table.insert(fireArgs, true)
+        elseif argStr:lower() == "false" then
+            table.insert(fireArgs, false)
+        elseif argStr:lower() == "nil" then
+            table.insert(fireArgs, nil)
+        else
+            table.insert(fireArgs, argStr)
+        end
+    end
+
+    -- Validate that the found remote matches the configured type.
+    if self.State.IsRemoteFunction and not remote:IsA("RemoteFunction") then
+        return DoNotif("Config Error: Remote is not a RemoteFunction. Use ;setremotetype.", 3)
+    elseif not self.State.IsRemoteFunction and not remote:IsA("RemoteEvent") then
+        return DoNotif("Config Error: Remote is not a RemoteEvent. Use ;setremotetype.", 3)
+    end
+
+    if self.State.IsRemoteFunction then
+        DoNotif(string.format("Invoking with %d custom arguments...", #fireArgs), 2)
+        local success, result = pcall(function() return remote:InvokeServer(unpack(fireArgs)) end)
+        if not success then
+            warn("--> [FireRemote] Invoke FAILED:", tostring(result))
+            DoNotif("Invoke failed. See console (F9).", 3)
+        else
+            print("--> [FireRemote] Invoke SUCCESS. Result:", result)
+            DoNotif("Invoke successful. Result printed to console.", 2)
+        end
+    else
+        DoNotif(string.format("Firing with %d custom arguments...", #fireArgs), 2)
+        local success, err = pcall(function() remote:FireServer(unpack(fireArgs)) end)
+        if not success then
+            warn("--> [FireRemote] Fire FAILED:", tostring(err))
+            DoNotif("Fire failed. See console (F9).", 3)
+        end
+    end
+end
+
+
+-- Initializes the module and registers its commands.
+function Modules.ForceEquip:Initialize()
+    local module = self
+    module.Services = {}
+    for _, serviceName in ipairs(module.Dependencies or {}) do
+        module.Services[serviceName] = game:GetService(serviceName)
+    end
+
+    RegisterCommand({
+        Name = "forceequip",
+        Aliases = {"fequip", "fer"},
+        Description = "Fires the configured remote to equip a weapon. Usage: ;fe <WeaponName>"
+    }, function(args)
+        module:Execute(args[1])
+    end)
+
+    -- [NEW] Command for firing the same remote path with custom arguments.
+    RegisterCommand({
+        Name = "firepath",
+        Aliases = {"fpath", "fire"},
+        Description = "Fires the configured remote with custom arguments. Usage: ;fire [arg1] [arg2]..."
+    }, function(args)
+        module:ExecuteWithArgs(args)
+    end)
+
+    RegisterCommand({
+        Name = "setremotepath",
+        Aliases = {"setpath"},
+        Description = "Sets the path for the ForceEquip module. Usage: ;setpath [path]"
+    }, function(args)
+        if not args[1] then
+            return DoNotif("Usage: ;setremotepath <path>", 3)
+        end
+        module.State.RemotePath = args[1]
+        DoNotif("ForceEquip remote path set to: " .. args[1], 3)
+    end)
+
+    RegisterCommand({
+        Name = "setremotetype",
+        Aliases = {"settype"},
+        Description = "Sets the remote type for ForceEquip. Usage: ;settype <event|function>"
+    }, function(args)
+        local typeStr = args[1] and args[1]:lower()
+        if typeStr == "function" then
+            module.State.IsRemoteFunction = true
+            DoNotif("ForceEquip remote type set to: RemoteFunction", 3)
+        elseif typeStr == "event" then
+            module.State.IsRemoteFunction = false
+            DoNotif("ForceEquip remote type set to: RemoteEvent", 3)
+        else
+            return DoNotif("Usage: ;setremotetype <event|function>", 3)
+        end
+    end)
+end
+
+Modules.NpcEsp = {
+    State = {
+        IsEnabled = false,
+        Connections = {},
+        TrackedNpcs = {} -- Key: Model, Value: {Highlight, Billboard, Humanoid, RootPart}
+    },
+    Dependencies = {"Players", "RunService", "Workspace"}
+}
+
+-- [Internal] Creates and manages the visual elements for a single NPC.
+function Modules.NpcEsp:_createEspForNpc(npcModel)
+    if self.State.TrackedNpcs[npcModel] then return end -- Already tracking
+
+    local humanoid = npcModel:FindFirstChildOfClass("Humanoid")
+    local rootPart = npcModel:FindFirstChild("HumanoidRootPart") or npcModel.PrimaryPart
+    
+    if not (humanoid and rootPart and humanoid.Health > 0) then return end
+    
+    -- 1. Create the Highlight
+    local highlight = Instance.new("Highlight", npcModel)
+    highlight.FillColor = Color3.fromRGB(255, 255, 0) -- Yellow for NPCs
+    highlight.OutlineColor = Color3.fromRGB(0, 0, 0)
+    highlight.FillTransparency = 0.7
+    highlight.OutlineTransparency = 0.4
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+
+    -- 2. Create the Billboard GUI
+    local billboard = Instance.new("BillboardGui", rootPart)
+    billboard.Name = "NpcEspBillboard"
+    billboard.Adornee = rootPart
+    billboard.AlwaysOnTop = true
+    billboard.Size = UDim2.fromOffset(150, 40)
+    billboard.StudsOffset = Vector3.new(0, 2, 0)
+    
+    -- Name Label
+    local nameLabel = Instance.new("TextLabel", billboard)
+    nameLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    nameLabel.Text = npcModel.Name
+    nameLabel.Font = Enum.Font.Code
+    nameLabel.TextSize = 16
+    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    nameLabel.BackgroundTransparency = 1
+    
+    -- Health & Distance Label
+    local infoLabel = Instance.new("TextLabel", billboard)
+    infoLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    infoLabel.Position = UDim2.new(0, 0, 0.5, 0)
+    infoLabel.Text = "" -- Will be updated by the loop
+    infoLabel.Font = Enum.Font.Code
+    infoLabel.TextSize = 14
+    infoLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    infoLabel.BackgroundTransparency = 1
+
+    -- 3. Store the created objects for tracking and cleanup
+    self.State.TrackedNpcs[npcModel] = {
+        Highlight = highlight,
+        Billboard = billboard,
+        InfoLabel = infoLabel,
+        Humanoid = humanoid,
+        RootPart = rootPart
+    }
+end
+
+-- [Internal] Safely destroys the visual elements for a single NPC.
+function Modules.NpcEsp:_removeEspForNpc(npcModel)
+    local trackedData = self.State.TrackedNpcs[npcModel]
+    if not trackedData then return end
+    
+    pcall(function() trackedData.Highlight:Destroy() end)
+    pcall(function() trackedData.Billboard:Destroy() end)
+    
+    self.State.TrackedNpcs[npcModel] = nil
+end
+
+-- [Internal] The main loop that updates visuals and finds new NPCs.
+function Modules.NpcEsp:_onHeartbeat()
+    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+    
+    -- Update existing NPCs and clean up dead/removed ones
+    for npcModel, data in pairs(self.State.TrackedNpcs) do
+        if not (npcModel and npcModel.Parent and data.Humanoid and data.Humanoid.Health > 0) then
+            self:_removeEspForNpc(npcModel)
+        else
+            -- Update distance and health
+            local distance = math.floor((myRoot.Position - data.RootPart.Position).Magnitude)
+            data.InfoLabel.Text = string.format("HP: %.0f | Dist: %d", data.Humanoid.Health, distance)
+        end
+    end
+    
+    -- Scan for new NPCs
+    for _, model in ipairs(self.Services.Workspace:GetChildren()) do
+        if model:IsA("Model") and model:FindFirstChildOfClass("Humanoid") then
+            -- Check if it's not a player and not already tracked
+            if not self.Services.Players:GetPlayerFromCharacter(model) and not self.State.TrackedNpcs[model] then
+                self:_createEspForNpc(model)
+            end
+        end
+    end
+end
+
+--- Enables the NPC ESP system.
+function Modules.NpcEsp:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+    
+    self.State.Connections.Heartbeat = self.Services.RunService.Heartbeat:Connect(function() self:_onHeartbeat() end)
+    
+    DoNotif("NPC ESP: ENABLED.", 2)
+end
+
+--- Disables the NPC ESP system and cleans up all visuals.
+function Modules.NpcEsp:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+    
+    if self.State.Connections.Heartbeat then
+        self.State.Connections.Heartbeat:Disconnect()
+        self.State.Connections.Heartbeat = nil
+    end
+    
+    for npcModel, _ in pairs(self.State.TrackedNpcs) do
+        self:_removeEspForNpc(npcModel)
+    end
+    table.clear(self.State.TrackedNpcs)
+    
+    DoNotif("NPC ESP: DISABLED.", 2)
+end
+
+--- Toggles the NPC ESP state.
+function Modules.NpcEsp:Toggle()
+    if self.State.IsEnabled then
+        self:Disable()
+    else
+        self:Enable()
+    end
+end
+
+--- Initializes the module, loads services, and registers the command.
+function Modules.NpcEsp:Initialize()
+    local module = self
+    module.Services = {}
+    for _, serviceName in ipairs(module.Dependencies or {}) do
+        module.Services[serviceName] = game:GetService(serviceName)
+    end
+    
+    RegisterCommand({
+        Name = "npcesp",
+        Aliases = {"aiesp"},
+        Description = "Toggles ESP for non-player characters (NPCs) in the workspace."
+    }, function()
+        module:Toggle()
+    end)
+end
+
+RegisterCommand({
+    Name = "antireset",
+    Aliases = {"noreset", "ar"},
+    Description = "Toggles a system that prevents your character from resetting."
+}, function()
+    Modules.AntiReset:Toggle()
+end)
+
 Modules.AntiCFrameTeleport = {
 MAX_SPEED = 70,
 MAX_STEP_DIST = 8,
@@ -3792,113 +4285,1821 @@ function Modules.ScriptHunter:Initialize()
     end)
 end
 
-Modules.Airwalk = {
+local ContextActionService = game:GetService("ContextActionService")
+
+Modules.AdvancedAirwalk = {
     State = {
         IsEnabled = false,
-        ActiveForce = nil,
-        CharacterConnections = {}
+        AirwalkPart = nil,
+        RenderConnection = nil,
+        Connections = {},
+        GUIs = {},
+        -- Input state
+        IsTyping = false,
+        Increase = false,
+        Decrease = false,
+        -- Physics state
+        Offset = 0
+    },
+    Config = {
+        VerticalSpeed = 1.75,
+        Keybinds = {
+            Increase = Enum.KeyCode.Space, -- Or Enum.KeyCode.E
+            Decrease = Enum.KeyCode.LeftControl -- Or Enum.KeyCode.Q
+        }
+    },
+    -- Forward-declare services for robustness
+    Services = {
+        RunService = game:GetService("RunService"),
+        UserInputService = game:GetService("UserInputService"),
+        Players = game:GetService("Players"),
+        Workspace = game:GetService("Workspace"),
+        CoreGui = game:GetService("CoreGui")
     }
 }
 
---- [NEW HELPER FUNCTION] Calculates the total mass of a character model.
--- @param character The character model to measure.
--- @return The total mass of all BaseParts within the model.
-function Modules.Airwalk:_getCharacterTotalMass(character)
-    local totalMass = 0
-    if not character then return totalMass end
-
-    -- Iterate through all descendants to find parts with mass
-    for _, descendant in ipairs(character:GetDescendants()) do
-        if descendant:IsA("BasePart") then
-            totalMass = totalMass + descendant.Mass
-        end
-    end
-    return totalMass
-end
-
---- Enables the airwalk effect.
-function Modules.Airwalk:Enable()
-    if self.State.IsEnabled then return end
-    self.State.IsEnabled = true
-
-    local function applyAirwalk(character)
-        if not character then return end
-        local hrp = character:WaitForChild("HumanoidRootPart", 2)
-        if not hrp then return end
-
-        -- Clean up any old force instances before applying a new one
-        if hrp:FindFirstChild("AirwalkForce") then
-             hrp.AirwalkForce:Destroy()
-        end
-        if hrp:FindFirstChild("AirwalkAttachment") then
-            hrp.AirwalkAttachment:Destroy()
-        end
-
-        local attachment = Instance.new("Attachment")
-        attachment.Name = "AirwalkAttachment"
-        attachment.Parent = hrp
-
-        local force = Instance.new("VectorForce")
-        force.Name = "AirwalkForce"
-        force.Attachment0 = attachment
-        force.RelativeTo = Enum.ActuatorRelativeTo.World
-        
-        -- [FIX] Correctly calculate total character mass and apply counter-gravity force.
-        local characterMass = Modules.Airwalk:_getCharacterTotalMass(character)
-        local gravity = game:GetService("Workspace").Gravity
-        force.Force = Vector3.new(0, characterMass * gravity, 0)
-        force.Parent = hrp
-        
-        self.State.ActiveForce = force
+---
+-- Disables the airwalk functionality and cleans up all associated resources.
+-- This function is idempotent and safe to call multiple times.
+--
+function Modules.AdvancedAirwalk:Disable()
+    if not self.State.IsEnabled then
+        return
     end
 
-    if LocalPlayer.Character then
-        applyAirwalk(LocalPlayer.Character)
+    -- Disconnect the main render loop first
+    if self.State.RenderConnection then
+        self.State.RenderConnection:Disconnect()
+        self.State.RenderConnection = nil
     end
 
-    self.State.CharacterConnections.Added = LocalPlayer.CharacterAdded:Connect(applyAirwalk)
-    self.State.CharacterConnections.Removing = LocalPlayer.CharacterRemoving:Connect(function()
-        self.State.ActiveForce = nil -- Clear reference on death to prevent memory leaks
-    end)
-    DoNotif("Airwalk: ENABLED.", 2)
-end
+    -- Destroy the invisible airwalk part
+    if self.State.AirwalkPart and self.State.AirwalkPart.Parent then
+        self.State.AirwalkPart:Destroy()
+    end
+    self.State.AirwalkPart = nil
 
---- Disables the airwalk effect and cleans up all resources.
-function Modules.Airwalk:Disable()
-    if not self.State.IsEnabled then return end
+    -- Disconnect all input and event connections
+    for key, conn in pairs(self.State.Connections) do
+        if conn then
+            conn:Disconnect()
+        end
+        self.State.Connections[key] = nil
+    end
+
+    -- Destroy all GUI elements
+    for key, gui in pairs(self.State.GUIs) do
+        if gui and gui.Parent then
+            gui:Destroy()
+        end
+        self.State.GUIs[key] = nil
+    end
+
+    -- Reset state variables
     self.State.IsEnabled = false
+    self.State.IsTyping = false
+    self.State.Increase = false
+    self.State.Decrease = false
+    self.State.Offset = 0
 
-    -- Destroy the active VectorForce if it exists
-    if self.State.ActiveForce and self.State.ActiveForce.Parent then
-        self.State.ActiveForce:Destroy()
-    end
-    self.State.ActiveForce = nil
-
-    -- Failsafe: Also remove from the current character if the reference was lost
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        local hrp = LocalPlayer.Character.HumanoidRootPart
-        if hrp:FindFirstChild("AirwalkForce") then hrp.AirwalkForce:Destroy() end
-        if hrp:FindFirstChild("AirwalkAttachment") then hrp.AirwalkAttachment:Destroy() end
-    end
-    
-    -- Critically, disconnect all event connections to prevent memory leaks
-    for _, connection in pairs(self.State.CharacterConnections) do
-        connection:Disconnect()
-    end
-    table.clear(self.State.CharacterConnections)
-
-    DoNotif("Airwalk: DISABLED.", 2)
+    DoNotif("Advanced Airwalk: OFF", 2)
 end
 
---- Toggles the airwalk state.
-function Modules.Airwalk:Toggle()
+---
+-- Enables the airwalk functionality, creating necessary parts, connections, and UI.
+--
+function Modules.AdvancedAirwalk:Enable()
+    -- If already running, call Disable first to ensure a clean reset.
     if self.State.IsEnabled then
         self:Disable()
+    end
+    self.State.IsEnabled = true
+
+    local localPlayer = self.Services.Players.LocalPlayer
+    local uis = self.Services.UserInputService
+    local isMobile = uis.TouchEnabled
+
+    DoNotif(isMobile and "Advanced Airwalk: ON" or "Advanced Airwalk: ON (Space & LCtrl)", 2)
+
+    --// Internal Helper: Creates UI buttons for mobile devices
+    local function createMobileButton(parent, text, position, callbackDown, callbackUp)
+        local button = Instance.new("TextButton")
+        button.Parent = parent
+        button.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+        button.Position = position
+        button.Size = UDim2.new(0.08, 0, 0.12, 0)
+        button.Font = Enum.Font.SourceSansBold
+        button.Text = text
+        button.TextColor3 = Color3.fromRGB(255, 255, 255)
+        button.TextScaled = true
+
+        Instance.new("UICorner", button).CornerRadius = UDim.new(0.2, 0)
+        local stroke = Instance.new("UIStroke", button)
+        stroke.Color = Color3.fromRGB(255, 255, 255)
+        stroke.Thickness = 1.5
+
+        -- Event connections for press and release
+        button.MouseButton1Down:Connect(callbackDown)
+        button.MouseButton1Up:Connect(callbackUp)
+        button.TouchTap:Connect(callbackDown) -- Handle quick taps
+        button.TouchEnded:Connect(callbackUp)
+
+        return button
+    end
+
+    --// Setup Input Handling (Platform-Specific)
+    if isMobile then
+        local mobileGui = Instance.new("ScreenGui", self.Services.CoreGui)
+        mobileGui.Name = "AdvancedAirwalkMobileControls"
+        mobileGui.ResetOnSpawn = false
+        self.State.GUIs.MobileControls = mobileGui
+
+        -- Create UP and DOWN buttons
+        createMobileButton(mobileGui, "UP", UDim2.new(0.9, 0, 0.55, 0),
+            function() self.State.Increase = true end,
+            function() self.State.Increase = false end)
+
+        createMobileButton(mobileGui, "DOWN", UDim2.new(0.9, 0, 0.7, 0),
+            function() self.State.Decrease = true end,
+            function() self.State.Decrease = false end)
     else
-        self:Enable()
+        -- Desktop input handling
+        self.State.Connections.Focused = uis.TextBoxFocused:Connect(function() self.State.IsTyping = true end)
+        self.State.Connections.Released = uis.TextBoxFocusReleased:Connect(function() self.State.IsTyping = false end)
+
+        self.State.Connections.InputBegan = uis.InputBegan:Connect(function(input, gpe)
+            if gpe or self.State.IsTyping then return end
+            if input.KeyCode == self.Config.Keybinds.Increase then self.State.Increase = true end
+            if input.KeyCode == self.Config.Keybinds.Decrease then self.State.Decrease = true end
+        end)
+
+        self.State.Connections.InputEnded = uis.InputEnded:Connect(function(input)
+            if input.KeyCode == self.Config.Keybinds.Increase then self.State.Increase = false end
+            if input.KeyCode == self.Config.Keybinds.Decrease then self.State.Decrease = false end
+        end)
+    end
+
+    --// Create the physical Airwalk Part
+    local awPart = Instance.new("Part")
+    awPart.Name = "Callum_AirwalkPart"
+    awPart.Size = Vector3.new(8, 1.5, 8) -- Wider base for stability
+    awPart.Transparency = 1
+    awPart.Anchored = true
+    awPart.CanCollide = true
+    awPart.CanQuery = false -- Important for performance
+    awPart.Parent = self.Services.Workspace
+    self.State.AirwalkPart = awPart
+
+    --// Main Render Loop
+    self.State.RenderConnection = self.Services.RunService.RenderStepped:Connect(function()
+        if not (self.State.IsEnabled and self.State.AirwalkPart and self.State.AirwalkPart.Parent) then
+            -- Failsafe in case part is destroyed externally
+            self:Disable()
+            return
+        end
+
+        local success, char, root, hum = pcall(function()
+            local c = localPlayer.Character
+            return c, c and c:FindFirstChild("HumanoidRootPart"), c and c:FindFirstChildOfClass("Humanoid")
+        end)
+
+        if not (success and char and root and hum and hum.Health > 0) then
+            -- Hide the part if the character is missing or dead
+            self.State.AirwalkPart.CanCollide = false
+            return
+        end
+        
+        self.State.AirwalkPart.CanCollide = true
+
+        -- Calculate vertical offset based on rig type (R6/R15)
+        local hrpHalf = root.Size.Y * 0.5
+        local feetFromRoot
+        if hum.RigType == Enum.HumanoidRigType.R6 then
+            feetFromRoot = hrpHalf + (hum.HipHeight > 0 and hum.HipHeight or 2)
+        else
+            feetFromRoot = hrpHalf + (hum.HipHeight or 2)
+        end
+        local baseOffset = feetFromRoot + (self.State.AirwalkPart.Size.Y * 0.5)
+
+        -- Determine vertical movement from input state
+        local delta = 0
+        if self.State.Increase then delta = -self.Config.VerticalSpeed end
+        if self.State.Decrease then delta = self.Config.VerticalSpeed end
+        
+        -- Update the offset smoothly
+        self.State.Offset = self.State.Offset + delta
+        
+        -- Apply the new position to the airwalk part
+        local newY = root.Position.Y - baseOffset - self.State.Offset
+        self.State.AirwalkPart.CFrame = CFrame.new(root.Position.X, newY, root.Position.Z)
+    end)
+end
+
+--// --- Command Registration ---
+RegisterCommand({
+    Name = "airwalk",
+    Aliases = {"float", "aw"},
+    Description = "Toggles an advanced airwalk. Use Space/LCtrl or GUI to move."
+}, function()
+    -- This single command will now toggle the state.
+    if Modules.AdvancedAirwalk.State.IsEnabled then
+        Modules.AdvancedAirwalk:Disable()
+    else
+        Modules.AdvancedAirwalk:Enable()
+    end
+end)
+
+-- You can optionally keep the 'unairwalk' command for clarity if you wish.
+RegisterCommand({
+    Name = "unairwalk",
+    Aliases = {"unfloat", "unaw"},
+    Description = "Explicitly disables the advanced airwalk."
+}, function()
+    Modules.AdvancedAirwalk:Disable()
+end)
+
+Modules.Blackhole = {
+    State = {
+        IsEnabled = false,
+        IsForceActive = false,
+        TargetCFrame = CFrame.new(),
+        BlackholePart = nil,      -- The invisible anchor part in the workspace
+        BlackholeAttachment = nil, -- The specific point movers are attracted to
+        Connections = {},
+        UI = {}
+    },
+    Config = {
+        ForceResponsiveness = 200,
+        TorqueMagnitude = 100000,
+        MoveKey = Enum.KeyCode.E,
+        -- A unique name to identify physics objects created by this script for easy cleanup.
+        MoverName = "Callum_BlackholeMover"
+    },
+    Dependencies = {"RunService", "UserInputService", "Players", "Workspace", "CoreGui"},
+    Services = {}
+}
+
+---
+-- [Private] Removes all physics movers created by this module from the workspace.
+--
+function Modules.Blackhole:_cleanupForces()
+    for _, descendant in ipairs(self.Services.Workspace:GetDescendants()) do
+        if descendant.Name == self.Config.MoverName and descendant:IsA("Instance") then
+            -- This also implicitly destroys the AlignPosition and Torque as they are parented to the attachment.
+            descendant:Destroy()
+        end
+        -- Restore collision for parts we might have modified
+        if descendant:IsA("BasePart") and not descendant.CanCollide then
+            pcall(function() descendant.CanCollide = true end)
+        end
     end
 end
-RegisterCommand({ Name = "airwalk", Aliases = { "awalk" }, Description = "Toggles the ability to walk on air." }, function() Modules.Airwalk:Toggle() end)
+
+---
+-- [Private] Applies the black hole physics forces to a given part if eligible.
+--
+function Modules.Blackhole:_applyForce(part)
+    -- Only apply forces if the black hole is active and the part is a valid target.
+    if not self.State.IsForceActive or not (part and part:IsA("BasePart")) then return end
+    if part.Anchored or part:FindFirstAncestorOfClass("Humanoid") then return end
+    
+    -- Failsafe to prevent movers from being added to our own character parts.
+    if part:IsDescendantOf(self.Services.Players.LocalPlayer.Character) then return end
+
+    -- Clean up any existing physics movers to ensure ours takes priority.
+    for _, child in ipairs(part:GetChildren()) do
+        if child:IsA("BodyMover") or child:IsA("RocketPropulsion") then
+            child:Destroy()
+        end
+        if child.Name == self.Config.MoverName then
+            child:Destroy()
+        end
+    end
+    
+    part.CanCollide = false
+    
+    -- Create and configure the new physics movers.
+    local attachment = Instance.new("Attachment", part)
+    attachment.Name = self.Config.MoverName -- Tag our instances for cleanup
+    
+    local align = Instance.new("AlignPosition", attachment)
+    align.Attachment0 = attachment
+    align.Attachment1 = self.State.BlackholeAttachment
+    align.MaxForce = 1e9
+    align.MaxVelocity = math.huge
+    align.Responsiveness = self.Config.ForceResponsiveness
+    
+    local torque = Instance.new("Torque", attachment)
+    torque.Attachment0 = attachment
+    torque.Torque = Vector3.new(self.Config.TorqueMagnitude, self.Config.TorqueMagnitude, self.Config.TorqueMagnitude)
+end
+
+---
+-- Disables the Blackhole module entirely, cleaning up all parts, UI, and connections.
+--
+function Modules.Blackhole:Disable()
+    if not self.State.IsEnabled then return end
+
+    -- Disconnect all event listeners
+    for _, conn in pairs(self.State.Connections) do
+        conn:Disconnect()
+    end
+    table.clear(self.State.Connections)
+
+    -- Restore simulation radii to default behavior
+    pcall(function()
+        for _, plr in ipairs(self.Services.Players:GetPlayers()) do
+            plr.MaximumSimulationRadius = -1 -- -1 resets to default
+        end
+    end)
+    
+    -- Clean up all physics objects we created
+    self:_cleanupForces()
+
+    -- Destroy the core black hole part and the UI
+    if self.State.BlackholePart and self.State.BlackholePart.Parent then
+        self.State.BlackholePart:Destroy()
+    end
+    if self.State.UI.ScreenGui and self.State.UI.ScreenGui.Parent then
+        self.State.UI.ScreenGui:Destroy()
+    end
+
+    -- Reset state
+    self.State = {
+        IsEnabled = false,
+        IsForceActive = false,
+        TargetCFrame = CFrame.new(),
+        Connections = {},
+        UI = {}
+    }
+    DoNotif("Blackhole destroyed.", 2)
+end
+
+---
+-- Enables the Blackhole module, creating all necessary components and starting the simulation.
+--
+function Modules.Blackhole:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+    
+    local localPlayer = self.Services.Players.LocalPlayer
+
+    -- Create the central black hole part and attachment
+    local bhPart = Instance.new("Part")
+    bhPart.Name = "Callum_BlackholeCore"
+    bhPart.Anchored = true
+    bhPart.CanCollide = false
+    bhPart.Transparency = 1
+    bhPart.Size = Vector3.one
+    self.State.BlackholePart = bhPart
+    
+    self.State.BlackholeAttachment = Instance.new("Attachment", bhPart)
+    
+    local mouse = localPlayer:GetMouse()
+    self.State.TargetCFrame = mouse.Hit + Vector3.new(0, 5, 0)
+    bhPart.Parent = self.Services.Workspace
+
+    --// --- Connect Core Logic Loops ---
+
+    -- Loop 1: Manage simulation radius for physics ownership
+    self.State.Connections.SimRadius = self.Services.RunService.Heartbeat:Connect(function()
+        pcall(function()
+            for _, plr in ipairs(self.Services.Players:GetPlayers()) do
+                if plr ~= localPlayer then plr.MaximumSimulationRadius = 0 end
+            end
+            localPlayer.MaximumSimulationRadius = 1e9
+        end)
+    end)
+
+    -- Loop 2: Update the position of the black hole's center
+    self.State.Connections.PositionUpdate = self.Services.RunService.RenderStepped:Connect(function()
+        if self.State.BlackholeAttachment then
+            self.State.BlackholeAttachment.WorldCFrame = self.State.TargetCFrame
+        end
+    end)
+
+    -- Loop 3: Apply force to newly created parts
+    self.State.Connections.DescendantAdded = self.Services.Workspace.DescendantAdded:Connect(function(desc)
+        self:_applyForce(desc)
+    end)
+
+    -- Input connection for moving the black hole
+    self.State.Connections.Input = self.Services.UserInputService.InputBegan:Connect(function(input, gpe)
+        if not gpe and input.KeyCode == self.Config.MoveKey then
+            self.State.TargetCFrame = mouse.Hit + Vector3.new(0, 5, 0)
+        end
+    end)
+
+    --// --- Create Control UI ---
+    
+    local screenGui = Instance.new("ScreenGui", self.Services.CoreGui)
+    screenGui.Name = "BlackholeControlGUI"
+    screenGui.ResetOnSpawn = false
+    self.State.UI.ScreenGui = screenGui
+
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Name = "ToggleButton"
+    toggleBtn.Text = "Enable Blackhole"
+    toggleBtn.AnchorPoint = Vector2.new(0.5, 1)
+    toggleBtn.Size = UDim2.fromOffset(160, 40)
+    toggleBtn.Position = UDim2.new(0.5, 0, 0.93, 0)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(38, 38, 38)
+    toggleBtn.TextColor3 = Color3.new(1, 1, 1)
+    toggleBtn.Font = Enum.Font.SourceSansBold
+    toggleBtn.TextSize = 18
+    toggleBtn.Parent = screenGui
+    Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0.25, 0)
+
+    local moveBtn = toggleBtn:Clone()
+    moveBtn.Name = "MoveButton"
+    moveBtn.Text = "Move Blackhole (E)"
+    moveBtn.Position = UDim2.new(0.5, 0, 0.99, 0)
+    moveBtn.BackgroundColor3 = Color3.fromRGB(51, 51, 51)
+    moveBtn.Parent = screenGui
+
+    -- UI Event Handlers
+    toggleBtn.MouseButton1Click:Connect(function()
+        self.State.IsForceActive = not self.State.IsForceActive
+        toggleBtn.Text = self.State.IsForceActive and "Disable Blackhole" or "Enable Blackhole"
+        
+        if self.State.IsForceActive then
+            DoNotif("Blackhole force enabled", 2)
+            for _,v in ipairs(self.Services.Workspace:GetDescendants()) do self:_applyForce(v) end
+        else
+            self:_cleanupForces()
+            DoNotif("Blackhole force disabled", 2)
+        end
+    end)
+
+    moveBtn.MouseButton1Click:Connect(function()
+        self.State.TargetCFrame = mouse.Hit + Vector3.new(0, 5, 0)
+    end)
+    
+    DoNotif("Blackhole created. Tap button or press E to move.", 3)
+end
+
+---
+-- Initializes the module and registers the primary command.
+--
+function Modules.Blackhole:Initialize()
+    local module = self
+    for _, service in ipairs(self.Dependencies) do
+        module.Services[service] = game:GetService(service)
+    end
+
+    RegisterCommand({
+        Name = "blackhole",
+        Aliases = {"bhole"},
+        Description = "Toggles a client-sided black hole that pulls all unanchored parts."
+    }, function()
+        if module.State.IsEnabled then
+            module:Disable()
+        else
+            module:Enable()
+        end
+    end)
+end
+
+
+Modules.PathfinderFollow = {
+    State = {
+        IsEnabled = false,
+        TargetPlayer = nil,
+        FollowConnection = nil,
+        -- Pathfinding state
+        Path = nil,
+        CurrentWaypointIndex = 1,
+        LastPathRecalculation = 0,
+        LastSourcePos = Vector3.new(),
+        LastTargetPos = Vector3.new()
+    },
+    Config = {
+        -- How often (in seconds) the path is allowed to be recalculated.
+        RECALCULATION_INTERVAL = 0.5,
+        -- How far the player or target must move to trigger a path recalculation.
+        RECALCULATION_DISTANCE = 3,
+        -- How close we need to get to a waypoint to advance to the next one.
+        WAYPOINT_PROXIMITY = 4,
+        -- Parameters for the pathfinding algorithm.
+        PATH_PARAMS = {
+            AgentRadius = 3,
+            AgentHeight = 6,
+            AgentCanJump = true,
+        }
+    },
+    Dependencies = {"PathfindingService", "RunService", "Players"},
+    Services = {}
+}
+
+---
+-- [Private] The core logic loop connected to RunService.Heartbeat.
+-- This function is designed to be entirely non-blocking.
+--
+function Modules.PathfinderFollow:_onHeartbeat()
+    if not (self.State.IsEnabled and self.State.TargetPlayer and self.State.TargetPlayer.Parent) then
+        self:Disable()
+        return
+    end
+
+    -- 1. Get all necessary character components safely.
+    local localPlayer = self.Services.Players.LocalPlayer
+    local localChar = localPlayer.Character
+    local localHrp = localChar and localChar:FindFirstChild("HumanoidRootPart")
+    local localHum = localChar and localChar:FindFirstChildOfClass("Humanoid")
+    
+    local targetChar = self.State.TargetPlayer.Character
+    local targetHrp = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+
+    if not (localHrp and localHum and targetHrp and localHum.Health > 0) then
+        return -- Do nothing if characters are not in a valid state.
+    end
+
+    local sourcePos = localHrp.Position
+    local targetPos = targetHrp.Position
+
+    -- 2. Check if the path needs to be recalculated.
+    local timeSinceRecalc = os.clock() - self.State.LastPathRecalculation
+    local sourceMoved = (sourcePos - self.State.LastSourcePos).Magnitude > self.Config.RECALCULATION_DISTANCE
+    local targetMoved = (targetPos - self.State.LastTargetPos).Magnitude > self.Config.RECALCULATION_DISTANCE
+
+    if timeSinceRecalc > self.Config.RECALCULATION_INTERVAL and (sourceMoved or targetMoved) then
+        self.State.LastPathRecalculation = os.clock()
+        self.State.LastSourcePos = sourcePos
+        self.State.LastTargetPos = targetPos
+        
+        -- Compute the path asynchronously.
+        local success = pcall(function() self.State.Path:ComputeAsync(sourcePos, targetPos) end)
+        
+        if success and self.State.Path.Status == Enum.PathStatus.Success then
+            self.State.CurrentWaypointIndex = 1 -- Reset to the beginning of the new path.
+        end
+    end
+
+    -- 3. Traverse the current path without blocking.
+    if self.State.Path and self.State.Path.Status == Enum.PathStatus.Success then
+        local waypoints = self.State.Path:GetWaypoints()
+        if #waypoints == 0 or self.State.CurrentWaypointIndex > #waypoints then return end
+
+        local currentWaypoint = waypoints[self.State.CurrentWaypointIndex]
+        
+        -- Check if we've reached the current waypoint.
+        local distanceToWaypoint = (localHrp.Position - currentWaypoint.Position).Magnitude
+        if distanceToWaypoint < self.Config.WAYPOINT_PROXIMITY then
+            self.State.CurrentWaypointIndex = self.State.CurrentWaypointIndex + 1
+        else
+            -- If not close enough, continue moving towards it.
+            if currentWaypoint.Action == Enum.PathWaypointAction.Jump then
+                localHum.Jump = true
+            end
+            localHum:MoveTo(currentWaypoint.Position)
+        end
+    end
+end
+
+---
+-- Disables the pathfinding loop and cleans up all state.
+--
+function Modules.PathfinderFollow:Disable()
+    if not self.State.IsEnabled then return end
+
+    if self.State.FollowConnection then
+        self.State.FollowConnection:Disconnect()
+        self.State.FollowConnection = nil
+    end
+
+    -- Stop the character's current movement
+    pcall(function()
+        local char = self.Services.Players.LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then hum:MoveTo(hum.RootPart.Position) end
+    end)
+    
+    DoNotif("Pathfinder follow disabled.", 2)
+    
+    -- Reset state
+    self.State.IsEnabled = false
+    self.State.TargetPlayer = nil
+    self.State.Path = nil
+end
+
+---
+-- Enables pathfinding to follow a specified target player.
+-- @param targetPlayer <Player> The player object to follow.
+--
+function Modules.PathfinderFollow:Enable(targetPlayer)
+    if not targetPlayer or targetPlayer == self.Services.Players.LocalPlayer then
+        DoNotif("Invalid target for pathfinding.", 3)
+        return
+    end
+
+    self:Disable() -- Ensure a clean state before starting a new follow.
+
+    self.State.IsEnabled = true
+    self.State.TargetPlayer = targetPlayer
+    self.State.Path = self.Services.PathfindingService:CreatePath(self.Config.PATH_PARAMS)
+    self.State.LastPathRecalculation = 0 -- Force initial calculation.
+
+    -- Connect the main logic loop.
+    self.State.FollowConnection = self.Services.RunService.Heartbeat:Connect(function() self:_onHeartbeat() end)
+
+    DoNotif("Pathfinder following: " .. targetPlayer.Name, 2)
+end
+
+---
+-- Initializes the module and registers its commands.
+--
+function Modules.PathfinderFollow:Initialize()
+    local module = self
+    for _, service in ipairs(self.Dependencies) do
+        module.Services[service] = game:GetService(service)
+    end
+
+    RegisterCommand({
+        Name = "pathfind",
+        Aliases = {"follow"},
+        Description = "Follow a player using PathfindingService. Usage: ;pathfind <player|stop>"
+    }, function(args)
+        local argument = args[1]
+        if not argument or (argument:lower() == "stop" or argument:lower() == "off") then
+            module:Disable()
+            return
+        end
+
+        local target = Utilities.findPlayer(argument)
+        if target then
+            module:Enable(target)
+        else
+            DoNotif("Player '" .. argument .. "' not found.", 3)
+        end
+    end)
+end
+
+Modules.CharacterMorph = {
+    State = {
+        IsMorphed = false,
+        OriginalDescription = nil,
+        -- Connection to disconnect CharacterAdded event after reverting
+        CharacterAddedConnection = nil
+    },
+    Dependencies = {"Players"},
+    Services = {}
+}
+
+---
+-- [Private] A robust, asynchronous function to get a HumanoidDescription from a name or ID.
+-- @param target <string> The username or UserId of the target avatar.
+-- @returns <HumanoidDescription?> The fetched description, or nil if not found.
+--
+function Modules.CharacterMorph:_resolveDescription(target)
+    local targetId = tonumber(target)
+    
+    -- If the target is not a valid number, assume it's a username and get the ID.
+    if not targetId then
+        local success, idFromName = pcall(function()
+            return self.Services.Players:GetUserIdFromNameAsync(target)
+        end)
+        if not success or not idFromName then
+            DoNotif("Could not find a user with the name: " .. tostring(target), 3)
+            return nil
+        end
+        targetId = idFromName
+    end
+
+    -- Now, fetch the HumanoidDescription using the resolved UserId.
+    DoNotif("Loading avatar for ID: " .. targetId, 1.5)
+    local success, description = pcall(function()
+        return self.Services.Players:GetHumanoidDescriptionFromUserId(targetId)
+    end)
+
+    if not success or not description then
+        DoNotif("Unable to load avatar description for that user.", 3)
+        return nil
+    end
+
+    return description
+end
+
+---
+-- Applies a HumanoidDescription to the local player's character.
+-- This function will trigger a respawn for maximum reliability.
+-- @param description <HumanoidDescription> The description to apply.
+--
+function Modules.CharacterMorph:_applyAndRespawn(description)
+    local localPlayer = self.Services.Players.LocalPlayer
+    if not description then return end
+
+    -- Disconnect any previous post-respawn event to prevent conflicts.
+    if self.State.CharacterAddedConnection then
+        self.State.CharacterAddedConnection:Disconnect()
+        self.State.CharacterAddedConnection = nil
+    end
+
+    -- Connect a one-time event to apply the description as soon as the new character spawns.
+    self.State.CharacterAddedConnection = localPlayer.CharacterAdded:Once(function(character)
+        local humanoid = character:WaitForChild("Humanoid", 5)
+        if humanoid then
+            -- Wrap in a pcall as ApplyDescription can sometimes fail.
+            pcall(humanoid.ApplyDescription, humanoid, description)
+        end
+    end)
+    
+    -- Trigger the respawn.
+    localPlayer:LoadCharacter()
+end
+
+---
+-- Morphs the player's character into the target's appearance.
+-- @param target <string> The username or UserId of the target.
+--
+function Modules.CharacterMorph:Morph(target)
+    if not target then
+        DoNotif("Usage: ;char <username/userid>", 3)
+        return
+    end
+
+    -- Cache the player's original description if we haven't already.
+    if not self.State.OriginalDescription then
+        local success, originalDesc = pcall(function()
+            return self.Services.Players:GetHumanoidDescriptionFromUserId(self.Services.Players.LocalPlayer.UserId)
+        end)
+        if success then
+            self.State.OriginalDescription = originalDesc
+        else
+            warn("[CharacterMorph] Could not cache original character description.")
+        end
+    end
+
+    -- Run the asynchronous parts in a new thread to not lag the game.
+    task.spawn(function()
+        local newDescription = self:_resolveDescription(target)
+        if newDescription then
+            self.State.IsMorphed = true
+            self:_applyAndRespawn(newDescription)
+            DoNotif("Applying character morph...", 2)
+        end
+    end)
+end
+
+---
+-- Reverts the player's character to their original appearance.
+--
+function Modules.CharacterMorph:Revert()
+    if not self.State.IsMorphed then
+        DoNotif("You are not currently morphed.", 2)
+        return
+    end
+
+    if not self.State.OriginalDescription then
+        DoNotif("Could not find original avatar to revert to. Re-fetching...", 3)
+        -- Attempt to re-fetch if the cache was lost.
+        local success, originalDesc = pcall(function()
+            return self.Services.Players:GetHumanoidDescriptionFromUserId(self.Services.Players.LocalPlayer.UserId)
+        end)
+        if success then self.State.OriginalDescription = originalDesc end
+    end
+    
+    if self.State.OriginalDescription then
+        self:_applyAndRespawn(self.State.OriginalDescription)
+        self.State.IsMorphed = false
+        DoNotif("Reverting to original character...", 2)
+    else
+        DoNotif("Failed to revert character: Original description is missing.", 4)
+    end
+end
+
+---
+-- Initializes the module and registers its commands.
+--
+function Modules.CharacterMorph:Initialize()
+    local module = self
+    for _, service in ipairs(self.Dependencies) do
+        module.Services[service] = game:GetService(service)
+    end
+
+    RegisterCommand({
+        Name = "char",
+        Aliases = {"character", "morph"},
+        Description = "Change your character's appearance to someone else's. Usage: ;char <username/userid>"
+    }, function(args)
+        module:Morph(args[1])
+    end)
+
+    RegisterCommand({
+        Name = "unchar",
+        Aliases = {},
+        Description = "Reverts your character's appearance to your own."
+    }, function()
+        module:Revert()
+    end)
+end
+
+Modules.TimeStop = {
+    State = {
+        IsEnabled = false,
+        -- A table to store all active connections (PlayerAdded, CharacterAdded) for cleanup.
+        -- Key: Player's UserId or a string like "PlayerAdded", Value: RBXScriptConnection
+        Connections = {}
+    },
+    Dependencies = {"Players"},
+    Services = {}
+}
+
+---
+-- [Private] Applies the freeze effect to a single character model.
+-- @param character <Model> The character to freeze.
+--
+function Modules.TimeStop:_freezeCharacter(character)
+    if not character then return end
+    -- Use a short, non-yielding wait to ensure all parts have loaded.
+    task.wait() 
+    local success, err = pcall(function()
+        for _, descendant in ipairs(character:GetDescendants()) do
+            if descendant:IsA("BasePart") then
+                descendant.Anchored = true
+            end
+        end
+    end)
+    if not success then warn("[TimeStop] Failed to freeze character:", err) end
+end
+
+---
+-- [Private] Removes the freeze effect from a single character model.
+-- @param character <Model> The character to unfreeze.
+--
+function Modules.TimeStop:_unfreezeCharacter(character)
+    if not character then return end
+    pcall(function()
+        for _, descendant in ipairs(character:GetDescendants()) do
+            if descendant:IsA("BasePart") then
+                descendant.Anchored = false
+            end
+        end
+    end)
+end
+
+---
+-- Disables the time stop effect and cleans up all resources.
+--
+function Modules.TimeStop:Disable()
+    if not self.State.IsEnabled then return end
+
+    -- Disconnect all event listeners to stop applying the freeze.
+    for key, conn in pairs(self.State.Connections) do
+        conn:Disconnect()
+    end
+    table.clear(self.State.Connections)
+
+    -- Iterate through all players and unfreeze them.
+    for _, player in ipairs(self.Services.Players:GetPlayers()) do
+        if player.Character then
+            self:_unfreezeCharacter(player.Character)
+        end
+    end
+
+    self.State.IsEnabled = false
+    DoNotif("Time has resumed.", 2)
+end
+
+---
+-- Enables the time stop effect on all current and future players.
+--
+function Modules.TimeStop:Enable()
+    if self.State.IsEnabled then return end
+    -- It's good practice to call Disable first to ensure a clean state.
+    self:Disable()
+    self.State.IsEnabled = true
+
+    -- [Helper] Sets up the freeze logic for a given player.
+    local function setupPlayer(player)
+        -- Don't freeze ourselves.
+        if player == self.Services.Players.LocalPlayer then return end
+
+        -- Freeze their current character if it exists.
+        if player.Character then
+            self:_freezeCharacter(player.Character)
+        end
+        
+        -- Connect to their CharacterAdded event for future respawns.
+        local conn = player.CharacterAdded:Connect(function(character)
+            self:_freezeCharacter(character)
+        end)
+        
+        -- Store the connection so we can disconnect it later.
+        self.State.Connections[player.UserId] = conn
+    end
+
+    -- Apply to all existing players.
+    for _, player in ipairs(self.Services.Players:GetPlayers()) do
+        setupPlayer(player)
+    end
+
+    -- Connect to PlayerAdded to handle players who join while timestop is active.
+    self.State.Connections.PlayerAdded = self.Services.Players.PlayerAdded:Connect(setupPlayer)
+    
+    DoNotif("ZA WARUDO! Time has been stopped.", 3)
+end
+
+---
+-- Initializes the module and registers its commands.
+--
+function Modules.TimeStop:Initialize()
+    local module = self
+    for _, service in ipairs(self.Dependencies) do
+        module.Services[service] = game:GetService(service)
+    end
+
+    RegisterCommand({
+        Name = "timestop",
+        Aliases = {"tstop"},
+        Description = "Toggles a client-sided freeze for all other players."
+    }, function()
+        if module.State.IsEnabled then
+            module:Disable()
+        else
+            module:Enable()
+        end
+    end)
+    
+    -- Keep the `untimestop` command for convenience, pointing it to the Disable function.
+    RegisterCommand({
+        Name = "untimestop",
+        Aliases = {"untstop"},
+        Description = "Explicitly disables the time stop effect."
+    }, function()
+        module:Disable()
+    end)
+end
+
+Modules.EZFling = {
+    State = {
+        IsFlinging = false,
+        OriginalCFrame = nil
+    },
+    Config = {
+        -- How long (in seconds) the fling will attempt to build velocity on the target.
+        FLING_DURATION = 2,
+        -- The velocity magnitude goal before the fling stops early.
+        FLING_VELOCITY_GOAL = 500
+    },
+    Dependencies = {"Players", "Workspace"},
+    Services = {}
+}
+
+---
+-- [Private] Finds target player(s) based on a string argument.
+-- @param argument <string> e.g., "all", "others", "random", or a player's name.
+-- @returns <table> A list of Player objects to target.
+--
+function Modules.EZFling:_findTargets(argument)
+    local targets = {}
+    local localPlayer = self.Services.Players.LocalPlayer
+    local argLower = argument and argument:lower() or ""
+
+    if argLower == "all" then
+        return self.Services.Players:GetPlayers()
+    elseif argLower == "others" then
+        for _, player in ipairs(self.Services.Players:GetPlayers()) do
+            if player ~= localPlayer then
+                table.insert(targets, player)
+            end
+        end
+        return targets
+    elseif argLower == "random" then
+        local potentialTargets = {}
+        for _, player in ipairs(self.Services.Players:GetPlayers()) do
+            if player ~= localPlayer then
+                table.insert(potentialTargets, player)
+            end
+        end
+        if #potentialTargets > 0 then
+            table.insert(targets, potentialTargets[math.random(#potentialTargets)])
+        end
+        return targets
+    else
+        local target = Utilities.findPlayer(argument)
+        if target then
+            table.insert(targets, target)
+        end
+        return targets
+    end
+end
+
+---
+-- [Private] Executes the core fling logic on a single target player.
+-- This entire function runs in a separate thread to prevent freezing.
+--
+function Modules.EZFling:_executeFling(targetPlayer)
+    -- Run in a new thread to ensure the game client never freezes.
+    task.spawn(function()
+        -- 1. Setup and Validation
+        local localPlayer = self.Services.Players.LocalPlayer
+        local localChar = localPlayer.Character
+        local localHum = localChar and localChar:FindFirstChildOfClass("Humanoid")
+        local localRoot = localChar and localChar:FindFirstChild("HumanoidRootPart")
+
+        if not (localHum and localRoot) then return end
+        
+        -- Preserve original state
+        self.State.OriginalCFrame = localRoot.CFrame
+        local originalDestroyHeight = self.Services.Workspace.FallenPartsDestroyHeight
+        local camera = self.Services.Workspace.CurrentCamera
+        local originalCameraSubject = camera.CameraSubject
+
+        -- 2. Main Fling Logic (wrapped in pcall for safety)
+        local success, err = pcall(function()
+            local targetChar = targetPlayer.Character
+            local targetHum = targetChar and targetChar:FindFirstChildOfClass("Humanoid")
+            local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+            if not (targetChar and targetHum and targetRoot) then return end
+
+            camera.CameraSubject = targetHum
+            self.Services.Workspace.FallenPartsDestroyHeight = 0/0 -- NaN
+            localHumanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+
+            local startTime = os.clock()
+            repeat
+                local targetPart = targetRoot -- Prioritize the HumanoidRootPart
+                if not targetPart or not targetPart.Parent then break end
+
+                -- Rapidly teleport around the target to create physics instability
+                localHumanoid.RootPart.CFrame = targetPart.CFrame * CFrame.new(0, -3.5, 0)
+                localHumanoid.RootPart.Velocity = Vector3.new(0, 9e8, 0)
+                task.wait()
+                localHumanoid.RootPart.CFrame = targetPart.CFrame * CFrame.new(0, 3, 0)
+                localHumanoid.RootPart.Velocity = Vector3.new(0, -9e8, 0)
+                task.wait()
+
+            until targetPart.Velocity.Magnitude > self.Config.FLING_VELOCITY_GOAL
+                or not targetPart.Parent
+                or not targetPlayer.Parent
+                or targetHum.Health <= 0
+                or os.clock() > startTime + self.Config.FLING_DURATION
+
+        end)
+
+        -- 3. Cleanup and Restoration
+        pcall(function()
+            localHumanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
+            camera.CameraSubject = originalCameraSubject
+            self.Services.Workspace.FallenPartsDestroyHeight = originalDestroyHeight
+            
+            -- Restore player position
+            repeat
+                task.wait()
+                localRoot.CFrame = self.State.OriginalCFrame
+                localRoot.Velocity = Vector3.zero
+                localRoot.RotVelocity = Vector3.zero
+            until (localRoot.Position - self.State.OriginalCFrame.Position).Magnitude < 15
+        end)
+        
+        self.State.IsFlinging = false
+        if not success then warn("[EZFling] Execution error:", err) end
+    end)
+end
+
+---
+-- Initializes the module and registers its commands.
+--
+function Modules.EZFling:Initialize()
+    local module = self
+    for _, service in ipairs(self.Dependencies) do
+        module.Services[service] = game:GetService(service)
+    end
+
+    RegisterCommand({
+        Name = "ezfling",
+        Aliases = {},
+        Description = "Fling a player using a client-sided physics exploit. Usage: ;ezfling <player|all|others|random>"
+    }, function(args)
+        if module.State.IsFlinging then
+            return DoNotif("A fling is already in progress.", 2)
+        end
+
+        local targetName = args[1]
+        if not targetName then
+            return DoNotif("Usage: ;ezfling <player|all|others|random>", 3)
+        end
+
+        local targets = module:_findTargets(targetName)
+        if #targets == 0 then
+            return DoNotif("No valid targets found for '" .. targetName .. "'.", 3)
+        end
+
+        module.State.IsFlinging = true
+        DoNotif("Initiating fling sequence on " .. #targets .. " target(s)...", 2)
+        
+        for _, player in ipairs(targets) do
+            if player ~= module.Services.Players.LocalPlayer then
+                module:_executeFling(player)
+                task.wait(0.1) -- Stagger multiple flings slightly
+            end
+        end
+        
+        -- If only one target was flung, we can reset the flag sooner.
+        if #targets == 1 then
+             -- The actual flag is reset at the end of the async thread.
+             -- This just allows the command to be run again sooner.
+            task.delay(module.Config.FLING_DURATION + 1, function()
+                module.State.IsFlinging = false
+            end)
+        else
+            -- For multiple targets, provide a longer cooldown.
+            task.delay(5, function()
+                module.State.IsFlinging = false
+            end)
+        end
+    end)
+end
+
+Modules.AnimationSpeed = {
+    State = {
+        IsEnabled = false,
+        TargetSpeed = 1,
+        LoopConnection = nil
+    },
+    Dependencies = {"RunService", "Players"},
+    Services = {}
+}
+
+---
+-- Disables the animation speed override and cleans up resources.
+--
+function Modules.AnimationSpeed:Disable()
+    if not self.State.IsEnabled then return end
+
+    -- Disconnect the main loop to stop overriding the speed.
+    if self.State.LoopConnection then
+        self.State.LoopConnection:Disconnect()
+        self.State.LoopConnection = nil
+    end
+
+    self.State.IsEnabled = false
+
+    -- [CRITICAL IMPROVEMENT]: After disabling the loop, iterate one last time
+    -- to reset the speed of any currently playing animations back to 1.
+    -- Otherwise, they would be stuck at the modified speed until they finish.
+    task.spawn(function()
+        local char = self.Services.Players.LocalPlayer.Character
+        if not char then return end
+        
+        local animator = char:FindFirstChildOfClass("Humanoid") or char:FindFirstChildOfClass("AnimationController")
+        if not animator then return end
+
+        pcall(function()
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                track:AdjustSpeed(1)
+            end
+        end)
+    end)
+    
+    DoNotif("Animation speed control disabled.", 2)
+end
+
+---
+-- Enables or updates the animation speed override.
+-- @param speed <number> The desired playback speed (e.g., 2 for double speed).
+--
+function Modules.AnimationSpeed:Enable(speed)
+    local targetSpeed = tonumber(speed)
+    if not targetSpeed or targetSpeed < 0 then
+        DoNotif("Invalid speed. Must be a positive number.", 3)
+        return
+    end
+
+    self.State.TargetSpeed = targetSpeed
+
+    -- If the loop is already running, we just needed to update the speed value.
+    if self.State.IsEnabled then
+        DoNotif("Animation speed updated to " .. targetSpeed, 2)
+        return
+    end
+
+    self.State.IsEnabled = true
+    
+    -- Connect the main loop to RunService.Stepped for physics-related updates.
+    self.State.LoopConnection = self.Services.RunService.Stepped:Connect(function()
+        local char = self.Services.Players.LocalPlayer.Character
+        if not char then return end
+        
+        -- Find the Humanoid or AnimationController, which manages animations.
+        local animator = char:FindFirstChildOfClass("Humanoid") or char:FindFirstChildOfClass("AnimationController")
+        if not animator then return end
+
+        -- Use a pcall to prevent a single broken animation track from erroring the whole loop.
+        local success, err = pcall(function()
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                -- Only adjust speed if it's not already at the target, to be efficient.
+                if track.Speed ~= self.State.TargetSpeed then
+                    track:AdjustSpeed(self.State.TargetSpeed)
+                end
+            end
+        end)
+        
+        if not success then
+            warn("[AnimationSpeed] Error during loop:", err)
+            -- Automatically disable the module if a persistent error occurs.
+            self:Disable()
+        end
+    end)
+
+    DoNotif("Animation speed set to " .. targetSpeed, 2)
+end
+
+---
+-- Initializes the module and registers its commands.
+--
+function Modules.AnimationSpeed:Initialize()
+    local module = self
+    for _, service in ipairs(self.Dependencies) do
+        module.Services[service] = game:GetService(service)
+    end
+
+    RegisterCommand({
+        Name = "animspeed",
+        Aliases = {"aspeed", "animationspeed"},
+        Description = "Adjusts local animation speed. Usage: ;animspeed <speed|off>"
+    }, function(args)
+        local argument = args[1]
+        
+        if not argument or (argument:lower() == "off" or argument:lower() == "stop" or argument:lower() == "reset") then
+            module:Disable()
+        else
+            module:Enable(argument)
+        end
+    end)
+
+    -- Registering the "un" command for convenience, which simply calls the Disable function.
+    RegisterCommand({
+        Name = "unanimspeed",
+        Aliases = {"unaspeed", "unanimationspeed"},
+        Description = "Stops the animation speed adjustment loop."
+    }, function()
+        module:Disable()
+    end)
+end
+
+Modules.ChatTranslator = {
+    State = {
+        IsEnabled = false,
+        IsPersistent = false,   -- Is persistent translation enabled?
+        TargetLang = "",        -- The language for persistent translation
+        GoogleSession = {      -- State for the HTTP session
+            fsid = nil,
+            bl = nil,
+            rid = math.random(1000, 9999),
+            gv = ""
+        },
+        Connections = {}
+    },
+    Config = {
+        -- The language incoming messages will be translated into.
+        YourLanguage = "en",
+        -- The prefix for one-off translation commands (e.g., ;tr ru Hello)
+        CommandPrefix = ">" 
+    },
+    Dependencies = {"HttpService", "Players", "TextChatService", "CoreGui"},
+    Services = {},
+    -- A static lookup table of supported languages.
+    LANGS = {
+        auto="Automatic",af="Afrikaans",sq="Albanian",am="Amharic",ar="Arabic",hy="Armenian",az="Azerbaijani",eu="Basque",be="Belarusian",bn="Bengali",bs="Bosnian",bg="Bulgarian",ca="Catalan",ceb="Cebuano",ny="Chichewa",
+        ["zh-cn"]="Chinese Simplified",["zh-tw"]="Chinese Traditional",co="Corsican",hr="Croatian",cs="Czech",da="Danish",nl="Dutch",en="English",eo="Esperanto",et="Estonian",tl="Filipino",fi="Finnish",fr="French",fy="Frisian",
+        gl="Galician",ka="Georgian",de="German",el="Greek",gu="Gujarati",ht="Haitian Creole",ha="Hausa",haw="Hawaiian",iw="Hebrew",hi="Hindi",hmn="Hmong",hu="Hungarian",is="Icelandic",ig="Igbo",id="Indonesian",ga="Irish",it="Italian",
+        ja="Japanese",jw="Javanese",kn="Kannada",kk="Kazakh",km="Khmer",ko="Korean",ku="Kurdish (Kurmanji)",ky="Kyrgyz",lo="Lao",la="Latin",lv="Latvian",lt="Lithuanian",lb="Luxembourgish",mk="Macedonian",mg="Malagasy",ms="Malay",
+        ml="Malayalam",mt="Maltese",mi="Maori",mr="Marathi",mn="Mongolian",my="Myanmar (Burmese)",ne="Nepali",no="Norwegian",ps="Pashto",fa="Persian",pl="Polish",pt="Portuguese",pa="Punjabi",ro="Romanian",ru="Russian",sm="Samoan",
+        gd="Scots Gaelic",sr="Serbian",st="Sesotho",sn="Shona",sd="Sindhi",si="Sinhala",sk="Slovak",sl="Slovenian",so="Somali",es="Spanish",su="Sundanese",sw="Swahili",sv="Swedish",tg="Tajik",ta="Tamil",te="Telugu",th="Thai",tr="Turkish",
+        uk="Ukrainian",ur="Urdu",uz="Uzbek",vi="Vietnamese",cy="Welsh",xh="Xhosa",yi="Yiddish",yo="Yoruba",zu="Zulu"
+    }
+}
+
+---
+-- [Private] Sends a system message to the local player's chat.
+-- @param message <string> The message to display.
+--
+function Modules.ChatTranslator:_sys(message)
+    local chans = self.Services.TextChatService:WaitForChild("TextChannels")
+    local systemChannel = chans:FindFirstChild("RBXSystem") or chans:FindFirstChild("RBXGeneral") or chans:GetChildren()[1]
+    if systemChannel and systemChannel.DisplaySystemMessage then
+        systemChannel:DisplaySystemMessage(message)
+    end
+end
+
+---
+-- [Private] Performs an HTTP request with Google Consent cookie handling.
+--
+function Modules.ChatTranslator:_request(url, method, body)
+    local session = self.State.GoogleSession
+    local success, response = pcall(function()
+        return self.Services.HttpService:RequestAsync({
+            Url = url,
+            Method = method or "GET",
+            Headers = {cookie = "CONSENT=YES+" .. (session.gv or "")},
+            Body = body
+        })
+    end)
+    
+    if not success then warn("[Translator] HTTP Request failed:", response); return nil end
+
+    if response.Body and response.Body:match("https://consent.google.com/s") then
+        local consentData = {}
+        for tag in response.Body:gmatch('<input type="hidden" name=".-" value=".-">') do
+            local k, v = tag:match('<input type="hidden" name="(.-)" value="(.-)">')
+            consentData[k] = v
+        end
+        session.gv = consentData.v or ""
+        -- Retry the request with the new consent value
+        return self:_request(url, method, body)
+    end
+    
+    return response
+end
+
+---
+-- [Private] Translates text using the Google Translate endpoint.
+-- @returns <string> translatedText, <string> detectedSourceLanguage
+--
+function Modules.ChatTranslator:_translate(text, targetLang, sourceLang)
+    local session = self.State.GoogleSession
+    session.rid += 10000
+    
+    local targetIso = self:_iso(targetLang) or "en"
+    local sourceIso = self:_iso(sourceLang) or "auto"
+    
+    local data = {{text, sourceIso, targetIso, true}, {nil}}
+    local freq = {{{"MkEWBc", self.Services.HttpService:JSONEncode(data), nil, "generic"}}}
+    
+    local queryParams = {
+        rpcids = "MkEWBc",
+        ["f.sid"] = session.fsid,
+        bl = session.bl,
+        hl = "en",
+        _reqid = session.rid - 10000,
+        rt = "c"
+    }
+    local url = "https://translate.google.com/_/TranslateWebserverUi/data/batchexecute?" .. self.Services.HttpService:UrlEncode(queryParams)
+    local body = "f.req=" .. self.Services.HttpService:UrlEncode(self.Services.HttpService:JSONEncode(freq))
+    
+    local response = self:_request(url, "POST", body)
+    if not (response and response.Success and response.Body) then return nil end
+
+    local ok, out = pcall(function()
+        local arr = self.Services.HttpService:JSONDecode(response.Body:match("%[.-%]\n"))
+        return self.Services.HttpService:JSONDecode(arr[1][3])
+    end)
+    
+    if not ok then return nil end
+
+    return out[2][1][1][6][1][1], out[3]
+end
+
+---
+-- [Private] Resolves a full language name or code to its ISO code.
+--
+function Modules.ChatTranslator:_iso(s)
+    if not s then return end
+    s = tostring(s):lower()
+    for k, v in pairs(self.LANGS) do
+        if k:lower() == s or v:lower() == s then
+            return k
+        end
+    end
+    return nil
+end
+
+---
+-- [Private] Handles incoming chat messages for translation.
+--
+function Modules.ChatTranslator:_onIncomingMessage(messageObject)
+    if not self.State.IsEnabled then return end
+    if not messageObject.TextSource or messageObject.TextSource.UserId == self.Services.Players.LocalPlayer.UserId then return end
+
+    local sourcePlayer = self.Services.Players:GetPlayerByUserId(messageObject.TextSource.UserId)
+    if not sourcePlayer then return end
+
+    local displayName = sourcePlayer.DisplayName
+    local userName = sourcePlayer.Name
+    local nameString = (displayName == userName) and ("@"..userName) or ("%s (@%s)"):format(displayName, userName)
+
+    local translatedText, detectedLang = self:_translate(messageObject.Text, self.Config.YourLanguage, "auto")
+    
+    if translatedText and translatedText ~= "" and translatedText ~= messageObject.Text then
+        local langTag = detectedLang and detectedLang:upper() or "AUTO"
+        self:_sys(("(%s) [%s]: %s"):format(langTag, nameString, translatedText))
+    end
+end
+
+---
+-- [Private] Handles outgoing chat messages for translation commands.
+--
+function Modules.ChatTranslator:_onOutgoingMessage(messageObject)
+    if not self.State.IsEnabled then return false end
+    
+    local text = messageObject.Text
+    
+    -- Check for one-off translation command (e.g., >ru Hello)
+    local code, msg = text:match("^" .. self.Config.CommandPrefix .. "(%S+)%s+(.+)$")
+    if code and msg then
+        local lang = self:_iso(code)
+        if lang then
+            local translated = self:_translate(msg, lang, "auto") or msg
+            self.Services.TextChatService.TextChannels.RBXGeneral:SendAsync(translated)
+            self:_sys("[TR] Sent in " .. lang)
+        else
+            self:_sys("[TR] Invalid language code: " .. code)
+        end
+        return true -- Was a command, so we should cancel the original message
+    end
+
+    -- Persistent translation logic
+    if self.State.IsPersistent and text:sub(1, 1) ~= ";" and text:sub(1, 1) ~= self.Config.CommandPrefix then
+        local translated = self:_translate(text, self.State.TargetLang, "auto") or text
+        self.Services.TextChatService.TextChannels.RBXGeneral:SendAsync(translated)
+        return true -- Cancel original message
+    end
+
+    return false -- Not a command we handle
+end
+
+---
+-- Disables the Chat Translator and cleans up all connections.
+--
+function Modules.ChatTranslator:Disable()
+    if not self.State.IsEnabled then return end
+    
+    for _, conn in pairs(self.State.Connections) do
+        conn:Disconnect()
+    end
+    table.clear(self.State.Connections)
+    
+    self.State.IsEnabled = false
+    self.State.IsPersistent = false
+    self.State.TargetLang = ""
+    
+    DoNotif("Chat Translator: DISABLED.", 2)
+end
+
+---
+-- Enables the Chat Translator, fetches session tokens, and connects to chat events.
+--
+function Modules.ChatTranslator:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+    
+    -- Initialize Google Translate session in the background
+    task.spawn(function()
+        local response = self:_request("https://translate.google.com/")
+        if response and response.Body then
+            self.State.GoogleSession.fsid = response.Body:match('"FdrFJe":"(.-)"')
+            self.State.GoogleSession.bl = response.Body:match('"cfb2h":"(.-)"')
+            if self.State.GoogleSession.fsid then
+                self:_sys("[TR] Chat Translator ready.")
+            else
+                warn("[Translator] Failed to get session tokens from Google Translate.")
+                self:_sys("[TR] Error: Could not initialize session.")
+            end
+        end
+    end)
+
+    -- Hook into incoming messages
+    self.State.Connections.Incoming = self.Services.TextChatService.MessageReceived:Connect(function(msg)
+        self:_onIncomingMessage(msg)
+    end)
+
+    -- Hook into outgoing messages
+    self.State.Connections.Outgoing = self.Services.TextChatService.SendingMessage:Connect(function(msg)
+        if self:_onOutgoingMessage(msg) then
+            msg.ShouldSend = false -- Cancel the original message if it was handled
+        end
+    end)
+    
+    DoNotif("Chat Translator: ENABLED.", 2)
+end
+
+---
+-- Initializes the module and registers commands.
+--
+function Modules.ChatTranslator:Initialize()
+    local module = self -- For context inside command functions
+    for _, serviceName in ipairs(module.Dependencies) do
+        module.Services[serviceName] = game:GetService(serviceName)
+    end
+
+    RegisterCommand({
+        Name = "translator",
+        Aliases = {"tr", "translate"},
+        Description = "Toggles the chat translator. Usage: ;tr [lang] [message] OR ;tr set [lang] OR ;tr off"
+    }, function(args)
+        if not module.State.IsEnabled then module:Enable() end
+
+        local subCommand = args[1] and args[1]:lower()
+        
+        if subCommand == "on" then
+             if not module.State.IsEnabled then module:Enable() end
+             return
+        end
+        if subCommand == "off" then
+            module:Disable()
+            return
+        end
+        if subCommand == "set" then
+            local lang = module:_iso(args[2])
+            if lang then
+                module.State.IsPersistent = true
+                module.State.TargetLang = lang
+                DoNotif("Translator set to persistently translate to: " .. lang, 3)
+            else
+                DoNotif("Invalid language code. Use ;trlangs to see a list.", 3)
+            end
+            return
+        end
+        if subCommand == "stop" or subCommand == "disable" then
+            module.State.IsPersistent = false
+            DoNotif("Persistent translation disabled.", 2)
+            return
+        end
+        
+        -- One-off translation
+        local lang = module:_iso(args[1])
+        if lang then
+            table.remove(args, 1)
+            local message = table.concat(args, " ")
+            local translated = module:_translate(message, lang, "auto") or message
+            module.Services.TextChatService.TextChannels.RBXGeneral:SendAsync(translated)
+            module:_sys("[TR] Sent in " .. lang)
+        else
+            DoNotif("Usage: ;tr [lang] [message] OR ;tr set [lang]", 4)
+        end
+    end)
+
+    RegisterCommand({
+        Name = "trlangs",
+        Description = "Lists all available language codes for the translator."
+    }, function()
+        local codes = {}
+        for code, _ in pairs(module.LANGS) do table.insert(codes, code) end
+        table.sort(codes)
+        
+        local message = "[TR] Languages: " .. table.concat(codes, ", ")
+        DoNotif("Printed language list to system chat.", 2)
+        module:_sys(message)
+    end)
+    
+    -- Enable by default when the script runs
+    self:Enable()
+end
+
+Modules.Attacher = {
+    State = {
+        isGuiBuilt = false,
+        followSpeed = 1,
+        selectedPlayerName = "Nearest Player",
+        isFollowing = false,
+        isAttaching = false,
+        
+        -- UI and Connection Storage
+        UI = {},
+        Connections = {}
+    },
+    Services = {}
+}
+
+--// Deactivation Logic (Cleanup)
+function Modules.Attacher:Deactivate()
+    if not self.State.isGuiBuilt then return end
+
+    -- Disconnect all active RunService/input connections
+    for _, conn in pairs(self.State.Connections) do
+        conn:Disconnect()
+    end
+    table.clear(self.State.Connections)
+
+    -- Destroy all UI elements
+    if self.State.UI.window and self.State.UI.window.Parent then
+        self.State.UI.window:Destroy()
+    end
+    if self.State.UI.currentHighlight and self.State.UI.currentHighlight.Parent then
+        self.State.UI.currentHighlight:Destroy()
+    end
+    table.clear(self.State.UI)
+    
+    self.State.isGuiBuilt = false
+    DoNotif("Attacher module deactivated.", 2)
+end
+
+--// Activation Logic (Initialization)
+function Modules.Attacher:Activate()
+    if self.State.isGuiBuilt then return end
+    
+    -- Localize self for easier access within functions
+    local self = self
+
+    --// --- Services & Player Variables ---
+    self.Services.Players = self.Services.Players or game:GetService("Players")
+    self.Services.RunService = self.Services.RunService or game:GetService("RunService")
+    self.Services.StarterGui = self.Services.StarterGui or game:GetService("StarterGui")
+    local LocalPlayer = self.Services.Players.LocalPlayer
+
+    --// --- UI and Core Logic ---
+    local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/bloodball/-back-ups-for-libs/main/wall%20v3"))()
+    local w = library:CreateWindow("Attacher")
+    self.State.UI.window = w
+
+    --// --- Internal Functions ---
+    local function notify(title, text, duration)
+        pcall(function()
+            self.Services.StarterGui:SetCore("SendNotification", {
+                Title = title; Text = text; Duration = duration or 3;
+            })
+        end)
+    end
+
+    local function clearHighlight()
+        if self.State.UI.currentHighlight and self.State.UI.currentHighlight.Parent then
+            self.State.UI.currentHighlight:Destroy()
+            self.State.UI.currentHighlight = nil
+        end
+    end
+
+    local function applyHighlight(targetPlayer)
+        clearHighlight()
+        if targetPlayer and targetPlayer.Character then
+            local h = Instance.new("Highlight", targetPlayer.Character)
+            h.Name = "TargetHighlight"
+            h.FillColor = Color3.fromRGB(255, 0, 0)
+            h.OutlineColor = Color3.fromRGB(255, 255, 255)
+            h.FillTransparency = 0.45
+            h.Adornee = targetPlayer.Character
+            self.State.UI.currentHighlight = h
+        end
+    end
+
+    local function findPlayerByPartialName(partialName)
+        -- This function remains the same as your previous version
+        local localChar = LocalPlayer.Character
+        if not localChar or not localChar:FindFirstChild("HumanoidRootPart") then return nil end
+        local myPos = localChar.HumanoidRootPart.Position
+        local lowerPartialName = partialName:lower()
+        local matches = {}
+        for _, p in ipairs(self.Services.Players:GetPlayers()) do
+            if p ~= LocalPlayer then
+                if p.Name:lower():find(lowerPartialName, 1, true) or p.DisplayName:lower():find(lowerPartialName, 1, true) then
+                    table.insert(matches, p)
+                end
+            end
+        end
+        if #matches == 0 then return nil end
+        if #matches == 1 then return matches[1] end
+        local closestPlayer, closestDist = nil, math.huge
+        for _, matchedPlayer in ipairs(matches) do
+            if matchedPlayer.Character and matchedPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                local dist = (matchedPlayer.Character.HumanoidRootPart.Position - myPos).Magnitude
+                if dist < closestDist then
+                    closestDist, closestPlayer = dist, matchedPlayer
+                end
+            end
+        end
+        return closestPlayer
+    end
+    
+    local function updateNearestPlayerButton()
+        if not self.State.UI.nearestPlayerButton then return end
+        if self.State.selectedPlayerName == "Nearest Player" then
+            self.State.UI.nearestPlayerButton.Name = "-> Nearest Player"
+        else
+            self.State.UI.nearestPlayerButton.Name = "Nearest Player"
+        end
+    end
+
+    -- Build the GUI
+    local mainFolder = w:CreateFolder("Follow Settings")
+    mainFolder:Slider("Speed", {min = 0; max = 5; precise = true;}, function(value)
+        self.State.followSpeed = value
+    end)
+    mainFolder:Box("Enter Username", "string", function(value)
+        if value == "" then notify("Input Error", "Please type a valid username.", 3) return end
+        local found = findPlayerByPartialName(value)
+        if found and found ~= LocalPlayer then
+            self.State.selectedPlayerName = found.Name
+            applyHighlight(found)
+            notify("Player Selected", "Targeting " .. found.Name, 2)
+            updateNearestPlayerButton()
+        else
+            self.State.selectedPlayerName = "Nearest Player"
+            updateNearestPlayerButton()
+            notify("Player Not Found", "Could not find player: " .. value, 3)
+        end
+    end)
+    self.State.UI.nearestPlayerButton = mainFolder:Button("-> Nearest Player", function()
+        self.State.selectedPlayerName = "Nearest Player"
+        clearHighlight()
+        notify("Player Selected", "Nearest Player", 2)
+        updateNearestPlayerButton()
+    end)
+    mainFolder:Toggle("Enable Following", function(bool)
+        self.State.isFollowing = bool
+        notify("Following", bool and "Enabled" or "Disabled")
+    end)
+    mainFolder:Toggle("Attach", function(bool)
+        self.State.isAttaching = bool
+        notify("Attach", bool and "Enabled" or "Disabled")
+    end)
+
+    -- Helper functions for the main loop
+    local function getNearestPlayer()
+        local localChar = LocalPlayer.Character
+        if not (localChar and localChar:FindFirstChild("HumanoidRootPart")) then return nil end
+        local myPos = localChar.HumanoidRootPart.Position
+        local closest, dist = nil, math.huge
+        for _, p in ipairs(self.Services.Players:GetPlayers()) do
+            if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                local d = (p.Character.HumanoidRootPart.Position - myPos).Magnitude
+                if d < dist then closest, dist = p, d end
+            end
+        end
+        return closest
+    end
+
+    local function getSelectedPlayer()
+        if self.State.selectedPlayerName == "Nearest Player" then
+            local n = getNearestPlayer()
+            if n then applyHighlight(n) else clearHighlight() end
+            return n
+        elseif self.State.selectedPlayerName and self.Services.Players:FindFirstChild(self.State.selectedPlayerName) then
+            local p = self.Services.Players[self.State.selectedPlayerName]
+            if p.Character and p.Character:FindFirstChild("HumanoidRootPart") and p.Character:FindFirstChildOfClass("Humanoid").Health > 0 then
+                return p
+            end
+        end
+        clearHighlight()
+        return nil
+    end
+
+    --// --- Event Connections ---
+    self.State.Connections.RenderStepped = self.Services.RunService.RenderStepped:Connect(function()
+        local target = getSelectedPlayer()
+        if (self.State.isFollowing or self.State.isAttaching) and target then
+            local localChar, targetChar = LocalPlayer.Character, target.Character
+            if localChar and targetChar then
+                local part, targetPart = localChar:FindFirstChild("HumanoidRootPart"), targetChar:FindFirstChild("HumanoidRootPart")
+                if part and targetPart then
+                    local hum = localChar:FindFirstChildOfClass("Humanoid")
+                    if hum then hum.AutoRotate = false end
+
+                    if self.State.isAttaching then
+                        part.CFrame = part.CFrame:Lerp(targetPart.CFrame, self.State.followSpeed)
+                        local thum = targetChar:FindFirstChildOfClass("Humanoid")
+                        if thum and thum.Jump then hum.Jump = true end
+                    elseif self.State.isFollowing then
+                        part.CFrame = part.CFrame:Lerp(CFrame.new(part.Position, targetPart.Position), self.State.followSpeed)
+                        hum:MoveTo(targetPart.Position)
+                    end
+                end
+            end
+        else
+            local c = LocalPlayer.Character
+            if c and c:FindFirstChildOfClass("Humanoid") then c:FindFirstChildOfClass("Humanoid").AutoRotate = true end
+        end
+    end)
+
+    self.State.Connections.KeyDown = LocalPlayer:GetMouse().KeyDown:Connect(function(k)
+        k = k:lower()
+        if k == "x" then
+            self.State.isFollowing = not self.State.isFollowing
+            notify("Following", self.State.isFollowing and "Enabled" or "Disabled")
+        elseif k == "z" then
+            self.State.isAttaching = not self.State.isAttaching
+            notify("Attach", self.State.isAttaching and "Enabled" or "Disabled")
+        end
+    end)
+    
+    self.State.isGuiBuilt = true
+    DoNotif("Attacher module activated.", 2)
+end
+
+--// Main Toggle Function
+function Modules.Attacher:Toggle()
+    if self.State.isGuiBuilt then
+        self:Deactivate()
+    else
+        self:Activate()
+    end
+end
+
+RegisterCommand({
+    Name = "attacher",
+    Aliases = {"attachui", "followui"},
+    Description = "Toggles the Player Attacher/Follower UI."
+}, function()
+    -- This ensures the module is initialized before being used
+    if not Modules.Attacher.Toggle then
+        -- Handle potential script reloads by re-attaching methods if necessary
+        -- (This is an advanced robustness check)
+        local originalFunctions = loadfile("path/to/your/AttacherModule.lua")()
+        Modules.Attacher.Activate = originalFunctions.Activate
+        Modules.Attacher.Deactivate = originalFunctions.Deactivate
+        Modules.Attacher.Toggle = originalFunctions.Toggle
+    end
+    Modules.Attacher:Toggle()
+end)
 
 Modules.AntiCheatBypass = {
     State = {
@@ -4135,6 +6336,473 @@ function Modules.AntiVoid:Toggle()
     end
 end
 RegisterCommand({ Name = "antivoid", Aliases = { "novoid" }, Description = "Toggles an anti-void system that teleports you to spawn before you die." }, function() Modules.AntiVoid:Toggle() end)
+
+Modules.AdvancedShiftLock = {
+    State = {
+        IsEnabled = false, -- Is the UI visible?
+        IsLocked = false,  -- Is the shift lock effect active?
+        UI = {},
+        Connections = {},
+        Originals = {} -- Store original humanoid properties
+    },
+    Config = {
+        Icons = {
+            On = "rbxasset://textures/ui/mouseLock_on.png",
+            Off = "rbxasset://textures/ui/mouseLock_off.png"
+        }
+    },
+    Dependencies = {"Players", "TweenService", "UserInputService", "RunService", "Workspace", "CoreGui"},
+    Services = {}
+}
+
+---
+-- [Private] Forces the character to face the camera's direction. Manages its own connection.
+--
+function Modules.AdvancedShiftLock:_faceCamera(state)
+    -- Disconnect any existing rotation loop.
+    if self.State.Connections.Rotation then
+        self.State.Connections.Rotation:Disconnect()
+        self.State.Connections.Rotation = nil
+    end
+
+    local char = self.Services.Players.LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    
+    if state then -- Enable rotation lock
+        self.State.Originals.AutoRotate = hum.AutoRotate
+        hum.AutoRotate = false
+        
+        self.State.Connections.Rotation = self.Services.RunService.RenderStepped:Connect(function()
+            local hrp = hum.RootPart
+            local camera = self.Services.Workspace.CurrentCamera
+            if not (hrp and camera) then return end
+            
+            local lookVector = camera.CFrame.LookVector
+            local flatVector = Vector3.new(lookVector.X, 0, lookVector.Z)
+            
+            if flatVector.Magnitude > 1e-4 then
+                hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + flatVector.Unit)
+            end
+        end)
+    else -- Disable rotation lock
+        if self.State.Originals.AutoRotate ~= nil then
+            hum.AutoRotate = self.State.Originals.AutoRotate
+            self.State.Originals.AutoRotate = nil
+        end
+    end
+end
+
+---
+-- [Private] Sets the mouse lock state.
+--
+function Modules.AdvancedShiftLock:_lockMouse(state)
+    if self.Services.UserInputService.MouseEnabled then
+        self.Services.UserInputService.MouseBehavior = state and Enum.MouseBehavior.LockCenter or Enum.MouseBehavior.Default
+    end
+end
+
+---
+-- [Private] The core function to toggle the shift lock effect on or off.
+--
+function Modules.AdvancedShiftLock:_setLockState(newState)
+    self.State.IsLocked = newState
+    
+    -- Apply core logic
+    self:_lockMouse(newState)
+    self:_faceCamera(newState)
+
+    -- Animate UI feedback
+    local ui = self.State.UI
+    if not ui.Button then return end
+    
+    local tweenInfo = TweenInfo.new(0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+    local targetColor = newState and Color3.fromRGB(0, 200, 255) or Color3.fromRGB(0, 140, 255)
+    local targetThickness = newState and 3 or 2
+    local targetBg = newState and Color3.fromRGB(38, 48, 60) or Color3.fromRGB(34, 34, 38)
+    
+    self.Services.TweenService:Create(ui.Stroke, tweenInfo, {Color = targetColor, Thickness = targetThickness}):Play()
+    self.Services.TweenService:Create(ui.Button, tweenInfo, {BackgroundColor3 = targetBg}):Play()
+    self.Services.TweenService:Create(ui.Icon, tweenInfo, {ImageColor3 = newState and targetColor or Color3.new(1,1,1)}):Play()
+    ui.Icon.Image = newState and self.Config.Icons.On or self.Config.Icons.Off
+end
+
+---
+-- [Private] Re-applies the lock state, typically after a character respawn.
+--
+function Modules.AdvancedShiftLock:_reapplyState()
+    if not self.State.IsEnabled then return end
+    -- We defer this to the next frame to ensure the character is fully loaded.
+    task.defer(function()
+        self:_setLockState(self.State.IsLocked)
+    end)
+end
+
+---
+-- Disables the module, destroys the UI, and cleans up all connections.
+--
+function Modules.AdvancedShiftLock:Disable()
+    if not self.State.IsEnabled then return end
+
+    -- Ensure the lock state is turned off cleanly.
+    if self.State.IsLocked then self:_setLockState(false) end
+    
+    -- Disconnect global event listeners
+    if self.State.Connections.CharacterAdded then self.State.Connections.CharacterAdded:Disconnect() end
+    if self.State.Connections.CameraChanged then self.State.Connections.CameraChanged:Disconnect() end
+    table.clear(self.State.Connections)
+
+    -- Animate UI destruction
+    if self.State.UI.ScreenGui then
+        local ui = self.State.UI
+        local tweenInfo = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+        self.Services.TweenService:Create(ui.Scale, tweenInfo, {Scale = 0}):Play()
+        self.Services.TweenService:Create(ui.Button, tweenInfo, {BackgroundTransparency = 1}):Play()
+        self.Services.TweenService:Create(ui.Stroke, TweenInfo.new(0.12), {Transparency = 1}):Play()
+        task.delay(0.2, function()
+            if ui.ScreenGui then ui.ScreenGui:Destroy() end
+        end)
+    end
+
+    self.State.IsEnabled = false
+    self.State.UI = {}
+    DoNotif("Advanced Shift Lock disabled.", 2)
+end
+
+---
+-- Enables the module and creates the UI.
+--
+function Modules.AdvancedShiftLock:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+
+    local ui = {}
+    self.State.UI = ui
+    
+    ui.ScreenGui = Instance.new("ScreenGui")
+    ui.ScreenGui.Name = "AdvancedShiftLockUI_Module"
+    ui.ScreenGui.ResetOnSpawn = false
+    ui.ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    ui.ScreenGui.DisplayOrder = 10000
+    
+    ui.Button = Instance.new("ImageButton")
+    ui.Button.Name = "LockBtn"
+    ui.Button.AnchorPoint = Vector2.new(0.5, 0.5)
+    ui.Button.Size = UDim2.fromOffset(64, 64)
+    ui.Button.Position = UDim2.new(1, -96, 1, -96)
+    ui.Button.BackgroundColor3 = Color3.fromRGB(34, 34, 38)
+    ui.Button.Parent = ui.ScreenGui
+    Instance.new("UICorner", ui.Button).CornerRadius = UDim.new(1, 0)
+
+    ui.Stroke = Instance.new("UIStroke", ui.Button)
+    ui.Stroke.Thickness = 2
+    ui.Stroke.Color = Color3.fromRGB(0, 140, 255)
+    ui.Stroke.Transparency = 0.25
+
+    ui.Icon = Instance.new("ImageLabel", ui.Button)
+    ui.Icon.BackgroundTransparency = 1
+    ui.Icon.AnchorPoint = Vector2.new(0.5, 0.5)
+    ui.Icon.Position = UDim2.fromScale(0.5, 0.5)
+    ui.Icon.Size = UDim2.fromScale(0.62, 0.62)
+    ui.Icon.Image = self.Config.Icons.Off
+    
+    local closeBtn = Instance.new("TextButton", ui.Button)
+    closeBtn.Name = "CloseButton"
+    closeBtn.AnchorPoint = Vector2.new(1, 0)
+    closeBtn.Position = UDim2.new(1, 6, 0, -6)
+    closeBtn.Size = UDim2.fromOffset(22, 22)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(230, 60, 60)
+    closeBtn.Text = "×"
+    closeBtn.TextScaled = true
+    closeBtn.TextColor3 = Color3.new(1,1,1)
+    Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(1,0)
+
+    ui.Scale = Instance.new("UIScale", ui.Button)
+    ui.Scale.Scale = 0
+    self.Services.TweenService:Create(ui.Scale, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Scale = 1}):Play()
+    
+    -- Make draggable
+    self:_makeDraggable(ui.Button, ui.Button)
+
+    -- Connect UI events
+    ui.Button.Activated:Connect(function() self:_setLockState(not self.State.IsLocked) end)
+    closeBtn.Activated:Connect(function() self:Disable() end)
+    
+    -- Connect game events
+    self.State.Connections.CharacterAdded = self.Services.Players.LocalPlayer.CharacterAdded:Connect(function() self:_reapplyState() end)
+    self.State.Connections.CameraChanged = self.Services.Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function() self:_reapplyState() end)
+
+    ui.ScreenGui.Parent = self.Services.CoreGui
+    DoNotif("Advanced Shift Lock enabled.", 2)
+end
+
+---
+-- Initializes the module and registers its commands.
+--
+function Modules.AdvancedShiftLock:Initialize()
+    local module = self
+    for _, service in ipairs(self.Dependencies) do
+        module.Services[service] = game:GetService(service)
+    end
+    
+    -- Replace the old shiftlock command.
+    RegisterCommand({
+        Name = "shiftlock",
+        Aliases = {"sl", "shiftlockui"},
+        Description = "Toggles a custom UI for a client-sided shift lock."
+    }, function()
+        if module.State.IsEnabled then
+            module:Disable()
+        else
+            module:Enable()
+        end
+    end)
+end
+
+Modules.R6Enforcer = {
+    State = {
+        IsEnabled = false,
+        OriginalAvatarType = nil,
+        CharacterAddedConnection = nil
+    },
+    Services = {
+        Players = game:GetService("Players")
+    }
+}
+
+--// --- Private Methods ---
+
+function Modules.R6Enforcer:_onCharacterAdded()
+    if not self.State.IsEnabled then return end
+    
+    local localPlayer = self.Services.Players.LocalPlayer
+    if localPlayer and localPlayer.AvatarType ~= Enum.AvatarType.R6 then
+        localPlayer.AvatarType = Enum.AvatarType.R6
+    end
+end
+
+--// --- Public Methods ---
+
+function Modules.R6Enforcer:Enable()
+    if self.State.IsEnabled then return end
+    
+    local localPlayer = self.Services.Players.LocalPlayer
+    if not localPlayer then return end
+
+    self.State.OriginalAvatarType = localPlayer.AvatarType
+    self.State.IsEnabled = true
+
+    localPlayer.AvatarType = Enum.AvatarType.R6
+
+    -- FIXED: Capture 'self' to prevent context loss in the event connection.
+    local module = self
+    self.State.CharacterAddedConnection = localPlayer.CharacterAdded:Connect(function()
+        module:_onCharacterAdded()
+    end)
+    
+    DoNotif("R6 Enforcer: ENABLED. Respawn to apply changes.", 4)
+end
+
+function Modules.R6Enforcer:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+
+    if self.State.CharacterAddedConnection then
+        self.State.CharacterAddedConnection:Disconnect()
+        self.State.CharacterAddedConnection = nil
+    end
+
+    local localPlayer = self.Services.Players.LocalPlayer
+    if localPlayer and self.State.OriginalAvatarType then
+        localPlayer.AvatarType = self.State.OriginalAvatarType
+    end
+    self.State.OriginalAvatarType = nil
+
+    DoNotif("R6 Enforcer: DISABLED. Respawn to revert to original rig.", 4)
+end
+
+function Modules.R6Enforcer:Toggle()
+    if self.State.IsEnabled then
+        self:Disable()
+    else
+        self:Enable()
+    end
+end
+
+--// --- Command Registration ---
+RegisterCommand({
+    Name = "forcer6",
+    Aliases = {"r6", "classicavatar"},
+    Description = "Forces your character to load as R6. Requires a respawn to take effect."
+}, function()
+    Modules.R6Enforcer:Toggle()
+end)
+
+Modules.AntiKick = {
+    State = {
+        IsEnabled = false,
+        OriginalKick = nil,
+        OriginalTeleport = nil,
+        RenderSteppedConnection = nil
+    },
+    Services = {
+        RunService = game:GetService("RunService"),
+        UserInputService = game:GetService("UserInputService"),
+        CoreGui = game:GetService("CoreGui"),
+        Players = game:GetService("Players"),
+        TeleportService = game:GetService("TeleportService")
+    }
+}
+
+--// --- Private Methods ---
+
+-- Encapsulates the hooking logic for cleanliness.
+function Modules.AntiKick:_createHooks()
+    local localPlayer = self.Services.Players.LocalPlayer
+    if not localPlayer then return false, "LocalPlayer not available." end
+
+    local success, err = pcall(function()
+        -- 1. Hook Player:Kick()
+        local playerMetatable = getrawmetatable(localPlayer)
+        assert(playerMetatable, "Could not get Player metatable.")
+        
+        self.State.OriginalKick = playerMetatable.__index.Kick
+        assert(self.State.OriginalKick, "Could not find original Player:Kick function.")
+
+        -- Create the hook. Using newcclosure is best practice for stealth.
+        local kickHook = newcclosure(function(self, ...)
+            -- The first argument to a method is always the object itself.
+            -- We only block the kick if it's targeting our local player.
+            if self == localPlayer then
+                warn("--> [AntiKick] Blocked a client-side Player:Kick() request.")
+                return -- Discard the call by returning nothing.
+            end
+            -- For any other player, call the original function to preserve game logic.
+            return self.State.OriginalKick(self, ...)
+        end)
+        
+        rawset(playerMetatable.__index, "Kick", kickHook)
+
+        -- 2. Hook TeleportService:Teleport()
+        local tsMetatable = getrawmetatable(self.Services.TeleportService)
+        assert(tsMetatable, "Could not get TeleportService metatable.")
+
+        self.State.OriginalTeleport = tsMetatable.__index.Teleport
+        assert(self.State.OriginalTeleport, "Could not find original TeleportService:Teleport function.")
+        
+        local teleportHook = newcclosure(function(...)
+            warn("--> [AntiKick] Blocked a client-side Teleport request.")
+            return -- Always block client-side teleports initiated this way.
+        end)
+
+        rawset(tsMetatable.__index, "Teleport", teleportHook)
+    end)
+
+    if not success then
+        return false, tostring(err)
+    end
+
+    return true
+end
+
+-- Encapsulates the restoration logic.
+function Modules.AntiKick:_removeHooks()
+    -- Restore Player:Kick()
+    pcall(function()
+        local localPlayer = self.Services.Players.LocalPlayer
+        if not localPlayer or not self.State.OriginalKick then return end
+        local playerMetatable = getrawmetatable(localPlayer)
+        rawset(playerMetatable.__index, "Kick", self.State.OriginalKick)
+        self.State.OriginalKick = nil
+    end)
+    
+    -- Restore TeleportService:Teleport()
+    pcall(function()
+        if not self.State.OriginalTeleport then return end
+        local tsMetatable = getrawmetatable(self.Services.TeleportService)
+        rawset(tsMetatable.__index, "Teleport", self.State.OriginalTeleport)
+        self.State.OriginalTeleport = nil
+    end)
+end
+
+--// --- Public Methods ---
+
+function Modules.AntiKick:Enable()
+    if self.State.IsEnabled then return end
+
+    -- Verify the executor supports the required hooking method.
+    if not getrawmetatable then
+        DoNotif("AntiKick Error: Your executor does not support getrawmetatable.", 5)
+        return
+    end
+
+    -- Attempt to create the hooks.
+    local success, err = self:_createHooks()
+    if not success then
+        DoNotif("AntiKick hook failed: " .. err, 5)
+        self:_removeHooks() -- Clean up any partial hooks
+        return
+    end
+
+    --// --- Setup RenderStepped Loop for GUI/Modal Lock (This logic was already excellent) ---
+    local KICK_GUI_KEYWORDS = {"kick", "ban", "warn", "exploit"}
+    self.State.RenderSteppedConnection = self.Services.RunService.RenderStepped:Connect(function()
+        -- Persistently fight against input being disabled.
+        if self.Services.UserInputService.ModalEnabled then
+            self.Services.UserInputService.ModalEnabled = false
+        end
+
+        -- Scan and destroy any UI that looks like a kick screen.
+        for _, gui in ipairs(self.Services.CoreGui:GetChildren()) do
+            if gui:IsA("ScreenGui") then
+                local guiNameLower = gui.Name:lower()
+                for _, keyword in ipairs(KICK_GUI_KEYWORDS) do
+                    if guiNameLower:find(keyword, 1, true) then
+                        warn("--> [AntiKick] Detected and destroyed a potential kick GUI: " .. gui.Name)
+                        gui:Destroy()
+                        break -- Move to the next GUI
+                    end
+                end
+            end
+        end
+    end)
+
+    self.State.IsEnabled = true
+    DoNotif("Anti-Kick: ENABLED. Client-side kicks will be blocked.", 3)
+end
+
+function Modules.AntiKick:Disable()
+    if not self.State.IsEnabled then return end
+
+    -- Restore the original functions.
+    self:_removeHooks()
+    
+    -- Disconnect the RenderStepped loop.
+    if self.State.RenderSteppedConnection then
+        self.State.RenderSteppedConnection:Disconnect()
+        self.State.RenderSteppedConnection = nil
+    end
+
+    self.State.IsEnabled = false
+    DoNotif("Anti-Kick: DISABLED.", 2)
+end
+
+function Modules.AntiKick:Toggle()
+    if self.State.IsEnabled then
+        self:Disable()
+    else
+        self:Enable()
+    end
+end
+
+--// --- Command Registration (Assuming this function exists elsewhere) ---
+RegisterCommand({
+    Name = "antikick",
+    Aliases = {"nokick", "ak"},
+    Description = "Toggles a system to block most client-sided kick attempts."
+}, function()
+    Modules.AntiKick:Toggle()
+end)
 
 Modules.AstralHead = {
 State = {
@@ -4374,6 +7042,85 @@ function Modules.HumanoidIntegrity:Initialize()
 end)
 end
 
+
+Modules.GamepassSpoofer = {
+    State = {
+        IsEnabled = false,
+        OriginalNamecall = nil
+    }
+}
+
+--// --- Public Methods ---
+
+function Modules.GamepassSpoofer:Enable()
+    if self.State.IsEnabled then return end
+
+    -- This is an advanced technique; verify that the executor supports it.
+    if not (getrawmetatable and getnamecallmethod) then
+        DoNotif("Error: Your executor does not support __namecall hooking.", 5)
+        return
+    end
+
+    local gameMetatable = getrawmetatable(game)
+    self.State.OriginalNamecall = gameMetatable.__namecall
+
+    setreadonly(gameMetatable, false)
+    
+    gameMetatable.__namecall = function(...)
+        local selfArg = ...
+        local method = getnamecallmethod()
+
+        -- Intercept the specific call we want to spoof.
+        if method == "UserOwnsGamePassAsync" and typeof(selfArg) == "Instance" and selfArg:IsA("MarketplaceService") then
+            -- Lie to the calling script and tell it the user owns the gamepass.
+            -- The arguments (player, gamepassId) are ignored; we just return true.
+            print("--> [GamepassSpoofer] Intercepted and spoofed UserOwnsGamePassAsync call.")
+            return true
+        end
+
+        -- If it's not our target, pass the call to the original handler to avoid breaking the game.
+        return self.State.OriginalNamecall(...)
+    end
+    
+    setreadonly(gameMetatable, true)
+
+    self.State.IsEnabled = true
+    DoNotif("Gamepass Spoofer: ENABLED. Client-side checks will be bypassed.", 3)
+end
+
+function Modules.GamepassSpoofer:Disable()
+    if not self.State.IsEnabled then return end
+
+    -- Safely attempt to restore the original metatable method.
+    pcall(function()
+        local gameMetatable = getrawmetatable(game)
+        setreadonly(gameMetatable, false)
+        gameMetatable.__namecall = self.State.OriginalNamecall
+        setreadonly(gameMetatable, true)
+    end)
+    
+    self.State.OriginalNamecall = nil
+    self.State.IsEnabled = false
+    DoNotif("Gamepass Spoofer: DISABLED. Engine restored.", 2)
+end
+
+function Modules.GamepassSpoofer:Toggle()
+    if self.State.IsEnabled then
+        self:Disable()
+    else
+        self:Enable()
+    end
+end
+
+--// --- Command Registration ---
+RegisterCommand({
+    Name = "spoofgamepass",
+    Aliases = {"fakepass", "gp"},
+    Description = "Toggles a client-side gamepass spoofer to bypass local checks."
+}, function()
+    Modules.GamepassSpoofer:Toggle()
+end)
+
 Modules.TeleporterScanner = {
 	State = {
 		UI = nil, -- Will hold the ScreenGui instance
@@ -4385,9 +7132,7 @@ Modules.TeleporterScanner = {
 function Modules.TeleporterScanner:ToggleGUI()
 	local self = Modules.TeleporterScanner
 
-	-- If the UI already exists, destroy it and clean up.
 	if self.State.UI and self.State.UI.Parent then
-		-- Run the cleanup logic before destroying
 		for _, highlight in pairs(self.State.Highlights) do
 			if highlight and highlight.Parent then highlight:Destroy() end
 		end
@@ -4399,27 +7144,26 @@ function Modules.TeleporterScanner:ToggleGUI()
 		return
 	end
 
-	-- Create the UI from scratch
 	DoNotif("Forensic Teleporter Scanner opened.", 2)
-
-	-- Services (re-declared locally for perfect encapsulation)
+	
 	local Workspace = game:GetService("Workspace")
 	local UserInputService = game:GetService("UserInputService")
 	local TweenService = game:GetService("TweenService")
 	local CoreGui = game:GetService("CoreGui")
 
-	-- Configuration
-	local CONFIDENCE_THRESHOLDS = { SCRIPT = 0.4, NAME = 0.6, DATA_PAYLOAD = 1.0 }
-	local SUSPICIOUS_KEYWORDS = { "teleport", "portal", "warp", "door", "secret", "game", "placeid", "gameid", "condo", "hangout" }
+	-- FIXED: Refined keywords for much higher accuracy
+	local SCRIPT_KEYWORDS = { "TeleportService", ":Teleport(", ":TeleportToPlaceInstance(", "fireproximityprompt" }
+	local NAME_KEYWORDS = { "teleport", "portal", "warp" }
+	local DATA_PAYLOAD_NAMES = { "placeid", "gameid", "targetplace" }
 
-	-- GUI Creation
+	local CONFIDENCE_THRESHOLDS = { SCRIPT = 1.0, DATA_PAYLOAD = 0.8, NAME = 0.5 }
+
 	local screenGui = Instance.new("ScreenGui")
-	self.State.UI = screenGui -- Store reference in module state
+	self.State.UI = screenGui
 	screenGui.Name = "TeleporterScannerGui"
 	screenGui.ResetOnSpawn = false
 	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 
-	-- GUI elements are created here... (condensed for brevity, logic is identical to v1.1)
 	local mainFrame = Instance.new("Frame"); mainFrame.Name = "MainFrame"; mainFrame.Size = UDim2.new(0, 350, 0, 450); mainFrame.Position = UDim2.new(0, 10, 0.5, -225); mainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 45); mainFrame.BorderColor3 = Color3.fromRGB(85, 85, 125); mainFrame.ClipsDescendants = true; mainFrame.Parent = screenGui
 	local titleLabel = Instance.new("TextLabel"); titleLabel.Name = "TitleLabel"; titleLabel.Size = UDim2.new(1, 0, 0, 30); titleLabel.BackgroundColor3 = Color3.fromRGB(45, 45, 55); titleLabel.Text = "Forensic Teleporter Scanner"; titleLabel.Font = Enum.Font.SourceSansBold; titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255); titleLabel.Parent = mainFrame
 	local scanButton = Instance.new("TextButton"); scanButton.Name = "ScanButton"; scanButton.Size = UDim2.new(1, -10, 0, 30); scanButton.Position = UDim2.new(0.5, 0, 0, 35); scanButton.AnchorPoint = Vector2.new(0.5, 0); scanButton.BackgroundColor3 = Color3.fromRGB(80, 60, 200); scanButton.Font = Enum.Font.SourceSansBold; scanButton.TextColor3 = Color3.fromRGB(255, 255, 255); scanButton.Text = "Begin Workspace Scan"; scanButton.Parent = mainFrame
@@ -4427,17 +7171,16 @@ function Modules.TeleporterScanner:ToggleGUI()
 	local resultsFrame = Instance.new("ScrollingFrame"); resultsFrame.Name = "ResultsFrame"; resultsFrame.Size = UDim2.new(1, -10, 1, -95); resultsFrame.Position = UDim2.new(0, 5, 0, 90); resultsFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40); resultsFrame.Parent = mainFrame
 	local listLayout = Instance.new("UIListLayout"); listLayout.SortOrder = Enum.SortOrder.LayoutOrder; listLayout.Padding = UDim.new(0, 3); listLayout.Parent = resultsFrame
 
-	-- Helper Functions
 	local function highlightPart(part, confidence)
 		if self.State.Highlights[part] then return end
 		local highlight = Instance.new("Highlight")
-		highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; highlight.FillColor = Color3.fromHSV(0.66 - (confidence * 0.66), 0.8, 1); highlight.OutlineColor = Color3.fromRGB(255, 255, 255); highlight.FillTransparency = 0.5; highlight.Parent = part
+		highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; highlight.FillColor = Color3.fromHSV(0.0, 0.8, 1); highlight.OutlineColor = Color3.fromRGB(255, 255, 255); highlight.FillTransparency = 0.5; highlight.Parent = part
 		self.State.Highlights[part] = highlight
 	end
 
 	local function addResultToList(part, confidence, reason)
 		local resultButton = Instance.new("TextButton")
-		resultButton.Name = part.Name; resultButton.Text = `[{string.format("%.0f", confidence * 100)}%] {part:GetFullName()} ({reason})`; resultButton.Size = UDim2.new(1, 0, 0, 25); resultButton.BackgroundColor3 = Color3.fromHSV(0.66 - (confidence * 0.66), 0.5, 0.5); resultButton.Font = Enum.Font.SourceSans; resultButton.TextXAlignment = Enum.TextXAlignment.Left; resultButton.TextColor3 = Color3.fromRGB(225, 225, 225); resultButton.LayoutOrder = -confidence; resultButton.Parent = resultsFrame
+		resultButton.Name = part.Name; resultButton.Text = `[{string.format("%.0f", confidence * 100)}%] {part:GetFullName()} ({reason})`; resultButton.Size = UDim2.new(1, 0, 0, 25); resultButton.BackgroundColor3 = Color3.fromHSV(0, 0.5, 0.5 + (confidence * 0.2)); resultButton.Font = Enum.Font.SourceSans; resultButton.TextXAlignment = Enum.TextXAlignment.Left; resultButton.TextColor3 = Color3.fromRGB(225, 225, 225); resultButton.LayoutOrder = -confidence; resultButton.Parent = resultsFrame
 		resultButton.MouseButton1Click:Connect(function()
 			local camera = Workspace.CurrentCamera; camera.CameraType = Enum.CameraType.Scriptable
 			local targetCFrame = CFrame.new(part.Position + part.CFrame.LookVector * 10, part.Position)
@@ -4454,58 +7197,98 @@ function Modules.TeleporterScanner:ToggleGUI()
 		for _, child in ipairs(resultsFrame:GetChildren()) do
 			if child:IsA("TextButton") then child:Destroy() end
 		end
-		scanButton.Text = "Begin Workspace Scan"
-		scanButton.Active = true
+		scanButton.Text = "Begin Workspace Scan"; scanButton.Active = true
 	end
 
+	-- FIXED: Entirely new scanning logic for precision.
 	local function scanWorkspace()
 		self.State.IsScanning = true
 		scanButton.Text = "Scanning... (This may take a moment)"; scanButton.Active = false
-		local partsFound = 0
-		for i, descendant in ipairs(Workspace:GetDescendants()) do
-			if i % 500 == 0 then task.wait() end
-			if descendant:IsA("BasePart") then
-				local confidence, reason = 0, ""
-				if descendant:FindFirstChildWhichIsA("Script") or descendant:FindFirstChildWhichIsA("LocalScript") then
-					confidence, reason = math.max(confidence, CONFIDENCE_THRESHOLDS.SCRIPT), "Has Script"
-				end
-				for _, child in ipairs(descendant:GetChildren()) do
-					for _, keyword in ipairs(SUSPICIOUS_KEYWORDS) do
-						if string.find(string.lower(child.Name), keyword) then
-							confidence, reason = math.max(confidence, CONFIDENCE_THRESHOLDS.DATA_PAYLOAD), `Data: "{child.Name}"`; break
+		local findings = {}
+
+		task.spawn(function()
+			for i, descendant in ipairs(Workspace:GetDescendants()) do
+				if i % 500 == 0 then task.wait() end
+				
+				local part, confidence, reason = nil, 0, ""
+
+				-- High-confidence check: Script source analysis
+				if descendant:IsA("LuaSourceContainer") then
+					local success, source = pcall(function() return descendant.Source end)
+					if success and source then
+						local lowerSource = source:lower()
+						for _, keyword in ipairs(SCRIPT_KEYWORDS) do
+							if lowerSource:find(keyword:lower(), 1, true) then
+								part = descendant:FindFirstAncestorOfClass("Model") or descendant.Parent
+								if part and part:IsA("BasePart") or part:IsA("Model") then
+									confidence = CONFIDENCE_THRESHOLDS.SCRIPT
+									reason = "Script Analysis"
+									break
+								end
+							end
 						end
 					end
 				end
-				for _, keyword in ipairs(SUSPICIOUS_KEYWORDS) do
-					if string.find(string.lower(descendant.Name), keyword) then
-						confidence, reason = math.max(confidence, CONFIDENCE_THRESHOLDS.NAME), reason == "" and "Suspicious Name" or reason; break
+
+				-- Medium/Low-confidence checks on BaseParts
+				if descendant:IsA("BasePart") and not part then
+					local currentConfidence, currentReason = 0, ""
+					-- Check for data payloads
+					for _, child in ipairs(descendant:GetChildren()) do
+						if child:IsA("StringValue") or child:IsA("IntValue") or child:IsA("NumberValue") then
+							for _, name in ipairs(DATA_PAYLOAD_NAMES) do
+								if child.Name:lower() == name then
+									currentConfidence = math.max(currentConfidence, CONFIDENCE_THRESHOLDS.DATA_PAYLOAD)
+									currentReason = "Data Payload"
+									break
+								end
+							end
+						end
+					end
+					-- Check part name
+					for _, keyword in ipairs(NAME_KEYWORDS) do
+						if descendant.Name:lower():find(keyword, 1, true) then
+							currentConfidence = math.max(currentConfidence, CONFIDENCE_THRESHOLDS.NAME)
+							if currentReason == "" then currentReason = "Suspicious Name" end
+							break
+						end
+					end
+					if currentConfidence > 0 then
+						part, confidence, reason = descendant, currentConfidence, currentReason
 					end
 				end
-				if confidence > 0 then
-					partsFound += 1; highlightPart(descendant, confidence); addResultToList(descendant, confidence, reason)
+
+				if part and (not findings[part] or confidence > findings[part].confidence) then
+					findings[part] = { confidence = confidence, reason = reason }
 				end
 			end
-		end
-		scanButton.Text = `Scan Complete! Found {partsFound} potentials.`
-		DoNotif(`Scan finished. Found {partsFound} points of interest.`, 3)
-		self.State.IsScanning = false
+			
+			-- Process all findings after the scan is complete
+			local partsFound = 0
+			for part, data in pairs(findings) do
+				partsFound += 1
+				highlightPart(part, data.confidence)
+				addResultToList(part, data.confidence, data.reason)
+			end
+
+			scanButton.Text = `Scan Complete! Found {partsFound} potentials.`
+			DoNotif(`Scan finished. Found {partsFound} points of interest.`, 3)
+			self.State.IsScanning = false
+		end)
 	end
 
-	-- Button Connections
 	scanButton.MouseButton1Click:Connect(function()
 		if self.State.IsScanning then return end
 		clearResults()
-		task.spawn(scanWorkspace)
+		scanWorkspace() -- No longer needs to be spawned in a new thread here
 	end)
 	clearButton.MouseButton1Click:Connect(clearResults)
 
-	-- Make GUI Draggable
 	local isDragging, dragStart, startPosition = false, nil, nil
 	titleLabel.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDragging = true; dragStart = input.Position; startPosition = mainFrame.Position; end end)
-	titleLabel.InputChanged:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseMovement and isDragging then local delta = input.Position - dragStart; mainFrame.Position = UDim2.new(startPosition.X.Scale, startPosition.X.Offset + delta.X, startPosition.Y.Scale, startPosition.Y.Offset + delta.Y) end end)
+	titleLabel.InputChanged:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseMovement and isDragging then local delta = input.Position - dragStart; mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y) end end)
 	UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDragging = false end end)
 
-	-- Finalize
 	screenGui.Parent = CoreGui
 end
 
@@ -5156,6 +7939,196 @@ RegisterCommand({
 	Modules.TweenClickTP:Toggle()
 end)
 
+
+
+Modules.RespawnOnPlayer = {
+    State = {
+        IsEnabled = false,
+        TargetPlayer = nil,
+        Connection = nil
+    },
+    Services = {
+        Players = game:GetService("Players"),
+        RunService = game:GetService("RunService")
+    }
+}
+
+--// --- Private Methods ---
+
+function Modules.RespawnOnPlayer:_onCharacterAdded(character)
+    -- FIXED: Use task.defer to run the logic on the next frame without yielding.
+    task.defer(function()
+        -- Re-validate the target at the moment of respawn.
+        if not self.State.IsEnabled or not self.State.TargetPlayer or not self.State.TargetPlayer.Parent then
+            DoNotif("Respawn target lost. Disabling.", 3)
+            self:Disable()
+            return
+        end
+
+        local myRoot = character and character:FindFirstChild("HumanoidRootPart")
+        local targetCharacter = self.State.TargetPlayer.Character
+        local targetRoot = targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart")
+
+        if myRoot and targetRoot then
+            myRoot.CFrame = targetRoot.CFrame + Vector3.new(0, 3, 0)
+            DoNotif("Respawned on " .. self.State.TargetPlayer.Name, 2)
+        else
+            DoNotif("Could not respawn on target: Character not found (they may be dead or resetting).", 3)
+        end
+    end)
+end
+
+--// --- Public Methods ---
+
+function Modules.RespawnOnPlayer:Enable(targetPlayer)
+    if not targetPlayer or targetPlayer == self.Services.Players.LocalPlayer then
+        return DoNotif("Invalid or self-targeted player.", 3)
+    end
+
+    self:Disable()
+
+    self.State.IsEnabled = true
+    self.State.TargetPlayer = targetPlayer
+
+    -- FIXED: Capture 'self' to prevent context loss in the event connection.
+    local module = self
+    self.State.Connection = self.Services.Players.LocalPlayer.CharacterAdded:Connect(function(char)
+        module:_onCharacterAdded(char)
+    end)
+
+    DoNotif("Respawn on Target: ENABLED. Will respawn on " .. targetPlayer.Name, 3)
+end
+
+function Modules.RespawnOnPlayer:Disable()
+    if not self.State.IsEnabled then return end
+
+    if self.State.Connection then
+        self.State.Connection:Disconnect()
+        self.State.Connection = nil
+    end
+
+    self.State.TargetPlayer = nil
+    self.State.IsEnabled = false
+
+    DoNotif("Respawn on Target: DISABLED.", 2)
+end
+
+--// --- Command Registration ---
+RegisterCommand({
+    Name = "respawnontarget",
+    Aliases = {"spon", "respawnon"},
+    Description = "Sets your respawn point to a target player's location. Usage: ;spon <PlayerName|clear>"
+}, function(args)
+    local argument = args[1]
+    if not argument then
+        return DoNotif("Usage: ;spon <PlayerName|clear>", 3)
+    end
+
+    if argument:lower() == "clear" or argument:lower() == "reset" or argument:lower() == "off" then
+        Modules.RespawnOnPlayer:Disable()
+        return
+    end
+
+    local targetPlayer = Utilities.findPlayer(argument)
+    if targetPlayer then
+        Modules.RespawnOnPlayer:Enable(targetPlayer)
+    else
+        DoNotif("Player not found: " .. argument, 3)
+    end
+end)
+
+Modules.RemoteInteractor = {
+    State = {
+        IsExecuting = false
+    },
+    Services = {
+        Players = game:GetService("Players"),
+        Workspace = game:GetService("Workspace"),
+        RunService = game:GetService("RunService")
+    }
+}
+
+--// --- Public Method ---
+
+function Modules.RemoteInteractor:Execute()
+    if self.State.IsExecuting then
+        return DoNotif("Remote interaction is already in progress.", 2)
+    end
+
+    self.State.IsExecuting = true
+    DoNotif("Scanning workspace for all interactive objects...", 3)
+
+    -- Run the entire operation in a separate thread to prevent the game from freezing.
+    task.spawn(function()
+        local localPlayer = self.Services.Players.LocalPlayer
+        local character = localPlayer.Character
+        local hrp = character and character:FindFirstChild("HumanoidRootPart")
+        if not hrp then
+            DoNotif("Cannot execute: Character's HumanoidRootPart not found.", 3)
+            self.State.IsExecuting = false
+            return
+        end
+
+        local originalCFrame = hrp.CFrame
+        local promptsFired = 0
+        local detectorsTriggered = 0
+        local allInteractiveObjects = self.Services.Workspace:GetDescendants()
+
+        --// --- Phase 1: Fire all ProximityPrompts (Clean Method) ---
+        if fireproximityprompt then
+            for _, instance in ipairs(allInteractiveObjects) do
+                if instance:IsA("ProximityPrompt") then
+                    local success, err = pcall(fireproximityprompt, instance)
+                    if success then
+                        promptsFired = promptsFired + 1
+                    end
+                end
+            end
+        else
+             warn("[RemoteInteractor] 'fireproximityprompt' is not available in this environment. Skipping ProximityPrompt phase.")
+        end
+        
+        -- A small delay to allow the engine to process the fired prompts.
+        task.wait()
+
+        --// --- Phase 2: Trigger all ClickDetectors (Teleport Method) ---
+        local detectorsToTrigger = {}
+        for _, instance in ipairs(allInteractiveObjects) do
+            if instance:IsA("ClickDetector") then
+                table.insert(detectorsToTrigger, instance)
+            end
+        end
+
+        if #detectorsToTrigger > 0 then
+            DoNotif("Found " .. #detectorsToTrigger .. " ClickDetectors. Triggering via teleport...", 2)
+            for _, detector in ipairs(detectorsToTrigger) do
+                local targetPart = detector.Parent
+                if targetPart and targetPart:IsA("BasePart") then
+                    -- Teleport to the part, wait one frame for the server to register proximity, then continue.
+                    hrp.CFrame = targetPart.CFrame
+                    self.Services.RunService.Heartbeat:Wait()
+                    detectorsTriggered = detectorsTriggered + 1
+                end
+            end
+
+            -- After iterating through all detectors, return to the original position.
+            hrp.CFrame = originalCFrame
+        end
+
+        DoNotif(string.format("Interaction complete. Fired %d prompts and triggered %d detectors.", promptsFired, detectorsTriggered), 4)
+        self.State.IsExecuting = false
+    end)
+end
+
+--// --- Command Registration ---
+RegisterCommand({
+    Name = "triggerall",
+    Aliases = {"clickall", "fireclicks"},
+    Description = "Scans and remotely fires all ClickDetectors and ProximityPrompts in the game."
+}, function()
+    Modules.RemoteInteractor:Execute()
+end)
+
 Modules.RageBot = {
     State = {
         Enabled = false,
@@ -5619,6 +8592,144 @@ function Modules.ClientFling:Initialize()
     end)
 end
 
+Modules.BlockRemote = {
+    State = {
+        IsEnabled = false,
+        OriginalNamecall = nil,
+        BlockedRemotes = {} -- Using a dictionary/hash map for instant lookups
+    }
+}
+
+--- Enables the __namecall hook to intercept and block remotes.
+function Modules.BlockRemote:Enable()
+    if self.State.IsEnabled then return end
+
+    -- This check is critical for ensuring the environment supports the required functions.
+    if not (getrawmetatable and getnamecallmethod) then
+        DoNotif("Error: Your executor does not support __namecall hooking.", 4)
+        return
+    end
+    
+    local mt = getrawmetatable(game)
+    self.State.OriginalNamecall = mt.__namecall
+    
+    setreadonly(mt, false)
+    mt.__namecall = function(...)
+        local args = {...}
+        local selfArg = args[1]
+        local method = getnamecallmethod()
+
+        -- We only care about client-to-server remote invocations.
+        if (selfArg:IsA("RemoteEvent") and method == "FireServer") or (selfArg:IsA("RemoteFunction") and method == "InvokeServer") then
+            local remotePath = selfArg:GetFullName()
+            
+            -- If the remote's path is in our block list, we "swallow" the call by returning nil.
+            if self.State.BlockedRemotes[remotePath] then
+                print("--> [BlockRemote] Blocked call to:", remotePath)
+                return nil -- Discard the call.
+            end
+        end
+
+        -- If it's not in our block list, pass it through to the original function.
+        return self.State.OriginalNamecall(...)
+    end
+    setreadonly(mt, true)
+    
+    self.State.IsEnabled = true
+    DoNotif("Remote Blocking System: ENABLED.", 2)
+end
+
+--- Disables the hook and restores the original __namecall method.
+function Modules.BlockRemote:Disable()
+    if not self.State.IsEnabled then return end
+    
+    -- Safely attempt to restore the original metatable index.
+    pcall(function()
+        local mt = getrawmetatable(game)
+        setreadonly(mt, false)
+        mt.__namecall = self.State.OriginalNamecall
+        setreadonly(mt, true)
+    end)
+    
+    self.State.IsEnabled = false
+    self.State.OriginalNamecall = nil
+    DoNotif("Remote Blocking System: DISABLED.", 2)
+end
+
+--- Initializes the module and registers all associated commands.
+function Modules.BlockRemote:Initialize()
+    local module = self
+
+    RegisterCommand({
+        Name = "blockremote",
+        Aliases = {"br", "block"},
+        Description = "Blocks a remote by its full path. Usage: ;br [path]"
+    }, function(args)
+        if not args[1] then
+            return DoNotif("Usage: ;blockremote <path.to.remote>", 3)
+        end
+        -- Automatically enable the core system if it isn't already running.
+        if not module.State.IsEnabled then
+            module:Enable()
+        end
+        local path = args[1]
+        module.State.BlockedRemotes[path] = true
+        DoNotif("Added to block list: " .. path, 2)
+    end)
+
+    RegisterCommand({
+        Name = "unblockremote",
+        Aliases = {"ubr", "unblock"},
+        Description = "Unblocks a remote by its full path."
+    }, function(args)
+        if not args[1] then
+            return DoNotif("Usage: ;unblockremote <path.to.remote>", 3)
+        end
+        local path = args[1]
+        if module.State.BlockedRemotes[path] then
+            module.State.BlockedRemotes[path] = nil
+            DoNotif("Removed from block list: " .. path, 2)
+        else
+            DoNotif("That remote was not on the block list.", 2)
+        end
+    end)
+
+    RegisterCommand({
+        Name = "listblocked",
+        Aliases = {"lsb"},
+        Description = "Lists all currently blocked remotes in the F9 console."
+    }, function()
+        print("--- [Blocked Remotes] ---")
+        local count = 0
+        for path, _ in pairs(module.State.BlockedRemotes) do
+            print(" - " .. path)
+            count = count + 1
+        end
+        DoNotif("Printed " .. count .. " blocked remotes to the console.", 2)
+    end)
+
+    RegisterCommand({
+        Name = "clearblocked",
+        Aliases = {"clb"},
+        Description = "Clears the entire remote block list."
+    }, function()
+        table.clear(module.State.BlockedRemotes)
+        DoNotif("Remote block list has been cleared.", 2)
+    end)
+
+    RegisterCommand({
+        Name = "toggleremotehooks",
+        Aliases = {"trh"},
+        Description = "Toggles the remote hooking system on/off without clearing the block list."
+    }, function()
+        if module.State.IsEnabled then
+            module:Disable()
+        else
+            module:Enable()
+        end
+    end)
+end
+
 Modules.ForceRespawn = {
     -- This module does not require persistent state, so the State table is omitted.
 }
@@ -5854,6 +8965,23 @@ function Modules.FlingGUI:Toggle()
 		self.State.UI = createFlingGui()
 		DoNotif("Fling GUI opened.", 2)
 	end
+end
+
+-- [NEW] Initialize function to handle keybinds for the FlingGUI module.
+function Modules.FlingGUI:Initialize()
+    local self = Modules.FlingGUI -- Explicitly reference the module table.
+
+    -- Create a connection to the UserInputService to listen for key presses.
+    self.State.KeybindConnection = UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+        -- Ignore input if the user is typing in a GUI (e.g., chat).
+        if gameProcessedEvent then return end
+
+        -- Check if the pressed key is RightControl.
+        if input.KeyCode == Enum.KeyCode.RightControl then
+            -- If it is, call the module's own Toggle function.
+            self:Toggle()
+        end
+    end)
 end
 
 RegisterCommand({
@@ -6497,6 +9625,153 @@ function Modules.AntiAnchor:Initialize()
     end)
 end
 
+Modules.FakeLag = {
+    State = {
+        IsEnabled = false,
+        LoopConnection = nil,
+        IsCharacterAnchored = false, -- The current anchor state in the loop
+        NextFlipTimestamp = 0,     -- The os.clock() time for the next state flip
+        StartTime = 0              -- The time the effect was enabled, for duration checks
+    },
+    Config = {
+        Interval = 0.05, -- The base time (in seconds) between anchoring/unanchoring
+        Jitter = 0.02,   -- Random time added/subtracted from the interval
+        Duration = nil   -- How long the effect should last in seconds (nil = infinite)
+    },
+    Dependencies = {"RunService", "Players"},
+    Services = {}
+}
+
+---
+-- [Private] The core logic loop that toggles the anchored state.
+--
+function Modules.FakeLag:_onHeartbeat()
+    -- Failsafe: if the module is disabled but the loop is still running, kill it.
+    if not self.State.IsEnabled then
+        self:Disable()
+        return
+    end
+
+    local localPlayer = self.Services.Players.LocalPlayer
+    local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+
+    -- If the character is gone, disable the module to clean up.
+    if not hrp then
+        self:Disable()
+        return
+    end
+
+    -- Check if the duration has expired.
+    if self.Config.Duration and (os.clock() - self.State.StartTime) > self.Config.Duration then
+        self:Disable()
+        return
+    end
+
+    -- The main toggle logic.
+    local now = os.clock()
+    if now >= self.State.NextFlipTimestamp then
+        self.State.IsCharacterAnchored = not self.State.IsCharacterAnchored
+        pcall(function() hrp.Anchored = self.State.IsCharacterAnchored end)
+
+        -- Calculate the next interval with random jitter.
+        local interval = self.Config.Interval
+        local jitter = self.Config.Jitter
+        local nextDelay = interval + (jitter > 0 and (math.random() * 2 * jitter - jitter) or 0)
+        
+        self.State.NextFlipTimestamp = now + math.max(0, nextDelay)
+    end
+end
+
+---
+-- Disables the fake lag effect and restores the character to a normal state.
+--
+function Modules.FakeLag:Disable()
+    if not self.State.IsEnabled then return end
+
+    if self.State.LoopConnection then
+        self.State.LoopConnection:Disconnect()
+        self.State.LoopConnection = nil
+    end
+
+    self.State.IsEnabled = false
+    
+    -- [CRITICAL] Ensure the player is unanchored upon disabling.
+    task.spawn(function()
+        local hrp = self.Services.Players.LocalPlayer.Character and self.Services.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            pcall(function() hrp.Anchored = false end)
+        end
+    end)
+    
+    DoNotif("Fake Lag disabled.", 2)
+end
+
+---
+-- Enables the fake lag effect, optionally updating its configuration.
+--
+function Modules.FakeLag:Enable(interval, jitter, duration)
+    -- Always disable first to ensure a clean start and prevent duplicate loops.
+    self:Disable()
+
+    -- Safely parse and update config values.
+    local newInterval = tonumber(interval)
+    local newJitter = tonumber(jitter)
+    local newDuration = tonumber(duration)
+
+    if newInterval then self.Config.Interval = math.max(0, newInterval) end
+    if newJitter then self.Config.Jitter = math.max(0, newJitter) end
+    self.Config.Duration = (newDuration and newDuration > 0) and newDuration or nil
+
+    -- Initialize state for the new session.
+    self.State.IsEnabled = true
+    self.State.StartTime = os.clock()
+    self.State.NextFlipTimestamp = os.clock()
+    self.State.IsCharacterAnchored = false
+
+    -- Connect the core loop.
+    self.State.LoopConnection = self.Services.RunService.Heartbeat:Connect(function() self:_onHeartbeat() end)
+
+    DoNotif("Fake Lag enabled.", 2)
+end
+
+---
+-- Initializes the module and registers its commands.
+--
+function Modules.FakeLag:Initialize()
+    local module = self
+    for _, service in ipairs(self.Dependencies) do
+        module.Services[service] = game:GetService(service)
+    end
+
+    RegisterCommand({
+        Name = "fakelag",
+        Aliases = {"flag"},
+        Description = "Toggles fake lag. Usage: ;fakelag [interval] [jitter] [duration] OR ;fakelag off"
+    }, function(args)
+        local arg1 = args[1]
+        
+        if arg1 and (arg1:lower() == "off" or arg1:lower() == "stop") then
+            module:Disable()
+        else
+            -- If already enabled and no new args, treat it as a toggle to turn it off.
+            if module.State.IsEnabled and #args == 0 then
+                module:Disable()
+            else
+                -- Enable with optional arguments.
+                module:Enable(args[1], args[2], args[3])
+            end
+        end
+    end)
+
+    RegisterCommand({
+        Name = "unfakelag",
+        Aliases = {"unflag"},
+        Description = "Stops the fake lag command."
+    }, function()
+        module:Disable()
+    end)
+end
+
 Modules.RevealInvisible = {
     State = {
         Connection = nil,
@@ -6562,6 +9837,505 @@ function Modules.RevealInvisible:Initialize()
             self:Disable()
         else
             self:Enable()
+        end
+    end)
+end
+
+Modules.GripEditor = {
+    State = {
+        UI = {}, -- Will hold all UI instances (ScreenGui, TextBoxes, etc.)
+        GripConnection = nil -- Stores the RBXScriptConnection for the .Changed event
+    },
+    Dependencies = {"Players", "CoreGui", "UserInputService"},
+    Services = {}
+}
+
+---
+-- [Private] Implements standard UI drag functionality.
+-- @param guiObject <GuiObject> The object to be dragged.
+-- @param dragHandle <GuiObject> The part of the UI the user clicks to drag.
+--
+function Modules.GripEditor:_makeDraggable(guiObject, dragHandle)
+    local isDragging = false
+    local dragStart, startPosition
+
+    dragHandle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            isDragging = true
+            dragStart = input.Position
+            startPosition = guiObject.Position
+            
+            -- Disconnect the drag on input release
+            local inputEndedConn
+            inputEndedConn = self.Services.UserInputService.InputEnded:Connect(function(endInput)
+                if endInput.UserInputType == input.UserInputType then
+                    isDragging = false
+                    inputEndedConn:Disconnect()
+                end
+            end)
+        end
+    end)
+
+    self.Services.UserInputService.InputChanged:Connect(function(input)
+        if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and isDragging then
+            local delta = input.Position - dragStart
+            guiObject.Position = UDim2.new(
+                startPosition.X.Scale, startPosition.X.Offset + delta.X,
+                startPosition.Y.Scale, startPosition.Y.Offset + delta.Y
+            )
+        end
+    end)
+end
+
+---
+-- [Private] Applies the grip CFrame from the UI to the currently equipped tool.
+--
+function Modules.GripEditor:_applyGrip()
+    local localPlayer = self.Services.Players.LocalPlayer
+    local char = localPlayer.Character
+    local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+    local tool = char and char:FindFirstChildOfClass("Tool")
+
+    if not (tool and backpack) then
+        return DoNotif("You must be holding a tool to edit its grip.", 3)
+    end
+    
+    -- Disconnect any previous connection to prevent stacking/leaks.
+    if self.State.GripConnection then
+        self.State.GripConnection:Disconnect()
+        self.State.GripConnection = nil
+    end
+
+    -- Helper to safely get number values from textboxes
+    local function getVal(name)
+        return tonumber(self.State.UI.TextBoxes[name].Text) or 0
+    end
+
+    -- Construct the new CFrame from UI inputs
+    local pos = Vector3.new(getVal("X"), getVal("Y"), getVal("Z"))
+    local rot = Vector3.new(getVal("RX"), getVal("RY"), getVal("RZ"))
+    local gripCFrame = CFrame.new(pos) * CFrame.Angles(math.rad(rot.X), math.rad(rot.Y), math.rad(rot.Z))
+
+    -- Re-equip the tool to apply the new grip property
+    tool.Parent = backpack
+    task.wait()
+    tool.Grip = gripCFrame
+    tool.Parent = char
+
+    -- This connection "fights" the game engine if it tries to reset the grip.
+    self.State.GripConnection = tool.Changed:Connect(function(property)
+        if property == "Grip" and tool.Grip ~= gripCFrame then
+            tool.Grip = gripCFrame
+        end
+    end)
+
+    -- The connection is automatically cleaned up when the tool is unequipped.
+end
+
+---
+-- Creates the user interface for the Grip Editor.
+--
+function Modules.GripEditor:CreateUI()
+    if self.State.UI.ScreenGui then return end -- UI already exists
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "GripEditorUI_Module"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = self.Services.CoreGui
+    self.State.UI.ScreenGui = screenGui
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.fromOffset(320, 270)
+    frame.Position = UDim2.fromScale(0.5, 0.5)
+    frame.AnchorPoint = Vector2.new(0.5, 0.5)
+    frame.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    frame.Parent = screenGui
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+    
+    local titleBar = Instance.new("Frame")
+    titleBar.Size = UDim2.new(1, 0, 0, 30)
+    titleBar.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+    titleBar.Parent = frame
+    Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 6)
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 1, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "Grip Position Editor"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 16
+    title.Parent = titleBar
+
+    -- Create input boxes for Position and Rotation
+    local labels = {"X", "Y", "Z", "RX", "RY", "RZ"}
+    self.State.UI.TextBoxes = {}
+    for i, label in ipairs(labels) do
+        local xOffset = ((i - 1) % 3) * 100
+        local yOffset = 40 + math.floor((i - 1) / 3) * 50
+
+        local labelUI = Instance.new("TextLabel", frame)
+        labelUI.Size = UDim2.fromOffset(40, 25)
+        labelUI.Position = UDim2.fromOffset(10 + xOffset, yOffset)
+        labelUI.BackgroundTransparency = 1
+        labelUI.Text = label
+        labelUI.TextColor3 = Color3.fromRGB(255, 255, 255)
+        labelUI.Font = Enum.Font.Gotham
+        labelUI.TextSize = 14
+
+        local box = Instance.new("TextBox", frame)
+        box.Size = UDim2.fromOffset(50, 25)
+        box.Position = UDim2.fromOffset(50 + xOffset, yOffset)
+        box.PlaceholderText = "0"
+        box.Text = ""
+        box.Font = Enum.Font.Gotham
+        box.TextSize = 14
+        box.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+        box.TextColor3 = Color3.fromRGB(255, 255, 255)
+        box.ClearTextOnFocus = false
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+        self.State.UI.TextBoxes[label] = box
+    end
+    
+    -- Create control buttons
+    local previewBtn = Instance.new("TextButton", frame)
+    previewBtn.Size = UDim2.fromOffset(280, 28)
+    previewBtn.Position = UDim2.fromOffset(20, 150)
+    previewBtn.Text = "Preview Changes"
+    previewBtn.Font = Enum.Font.GothamBold
+    previewBtn.BackgroundColor3 = Color3.fromRGB(75, 75, 95)
+    previewBtn.TextColor3 = Color3.new(1, 1, 1)
+    Instance.new("UICorner", previewBtn).CornerRadius = UDim.new(0, 4)
+
+    local applyBtn = Instance.new("TextButton", frame)
+    applyBtn.Size = UDim2.fromOffset(135, 32)
+    applyBtn.Position = UDim2.fromOffset(20, 200)
+    applyBtn.Text = "Apply & Close"
+    applyBtn.Font = Enum.Font.GothamBold
+    applyBtn.BackgroundColor3 = Color3.fromRGB(0, 170, 80)
+    applyBtn.TextColor3 = Color3.new(1, 1, 1)
+    Instance.new("UICorner", applyBtn).CornerRadius = UDim.new(0, 4)
+
+    local closeBtn = Instance.new("TextButton", frame)
+    closeBtn.Size = UDim2.fromOffset(135, 32)
+    closeBtn.Position = UDim2.fromOffset(165, 200)
+    closeBtn.Text = "Close"
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+    closeBtn.TextColor3 = Color3.new(1, 1, 1)
+    Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 4)
+
+    -- Connect button events
+    previewBtn.MouseButton1Click:Connect(function() self:_applyGrip() end)
+    applyBtn.MouseButton1Click:Connect(function() self:_applyGrip(); self:DestroyUI() end)
+    closeBtn.MouseButton1Click:Connect(function() self:DestroyUI() end)
+
+    -- Make it draggable
+    self:_makeDraggable(frame, titleBar)
+    DoNotif("Grip Editor opened.", 2)
+end
+
+---
+-- Destroys the user interface and cleans up state.
+--
+function Modules.GripEditor:DestroyUI()
+    if self.State.UI.ScreenGui then
+        self.State.UI.ScreenGui:Destroy()
+    end
+    if self.State.GripConnection then
+        self.State.GripConnection:Disconnect()
+    end
+    self.State = { UI = {} } -- Reset the state table
+    DoNotif("Grip Editor closed.", 2)
+end
+
+---
+-- Initializes the module and registers its commands.
+--
+function Modules.GripEditor:Initialize()
+    local module = self
+    for _, service in ipairs(self.Dependencies) do
+        module.Services[service] = game:GetService(service)
+    end
+
+    RegisterCommand({
+        Name = "grippos",
+        Aliases = {"setgrip", "gripeditor"},
+        Description = "Toggles a UI to manually edit your tool's grip CFrame."
+    }, function()
+        -- This command now acts as a toggle.
+        if module.State.UI.ScreenGui then
+            module:DestroyUI()
+        else
+            module:CreateUI()
+        end
+    end)
+end
+
+Modules.AnimationBuilder = {
+    State = {
+        UI = nil, -- Will hold the ScreenGui instance
+        OriginalAnimations = nil -- Will cache the user's default animations
+    },
+    Dependencies = {"Players", "CoreGui", "TweenService", "UserInputService"},
+    Services = {}
+}
+
+---
+-- [Private] Implements standard UI drag functionality.
+--
+function Modules.AnimationBuilder:_makeDraggable(guiObject, dragHandle)
+    local isDragging = false
+    local dragStart, startPosition
+
+    dragHandle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            isDragging = true
+            dragStart = input.Position
+            startPosition = guiObject.Position
+            
+            local inputEndedConn
+            inputEndedConn = self.Services.UserInputService.InputEnded:Connect(function(endInput)
+                if endInput.UserInputType == input.UserInputType then
+                    isDragging = false
+                    inputEndedConn:Disconnect()
+                end
+            end)
+        end
+    end)
+
+    self.Services.UserInputService.InputChanged:Connect(function(input)
+        if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and isDragging then
+            local delta = input.Position - dragStart
+            guiObject.Position = UDim2.new(
+                startPosition.X.Scale, startPosition.X.Offset + delta.X,
+                startPosition.Y.Scale, startPosition.Y.Offset + delta.Y
+            )
+        end
+    end)
+end
+
+---
+-- Destroys the UI and cleans up resources.
+--
+function Modules.AnimationBuilder:DestroyUI()
+    if not self.State.UI then return end
+
+    local mainFrame = self.State.UI.main
+    local tween = self.Services.TweenService:Create(mainFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {
+        Size = UDim2.fromScale(0.01, 0.01),
+        Position = UDim2.new(0.99, 0, 0.01, 0),
+        BackgroundTransparency = 1
+    })
+    tween:Play()
+    tween.Completed:Wait()
+    
+    self.State.UI.screenGui:Destroy()
+    self.State.UI = nil
+    DoNotif("Animation Builder closed.", 2)
+end
+
+---
+-- Creates and displays the Animation Builder UI.
+--
+function Modules.AnimationBuilder:CreateUI()
+    if self.State.UI then return end -- UI already exists
+
+    local localPlayer = self.Services.Players.LocalPlayer
+    local char = localPlayer.Character
+    local animateScript = char and char:FindFirstChild("Animate")
+
+    if not animateScript then
+        return DoNotif("Could not find 'Animate' script in character.", 4)
+    end
+    
+    -- Cache original animations if not already done
+    if not self.State.OriginalAnimations then
+        self.State.OriginalAnimations = {}
+        for _, valueObject in ipairs(animateScript:GetChildren()) do
+            if valueObject:IsA("StringValue") then
+                local anim = valueObject:FindFirstChildOfClass("Animation")
+                if anim then
+                    self.State.OriginalAnimations[valueObject.Name:lower()] = anim.AnimationId
+                end
+            end
+        end
+    end
+
+    -- UI Creation
+    self.State.UI = {}
+    local ui = self.State.UI
+
+    ui.screenGui = Instance.new("ScreenGui")
+    ui.screenGui.Name = "AnimationBuilder_Module"
+    ui.screenGui.ResetOnSpawn = false
+    ui.screenGui.Parent = self.Services.CoreGui
+    
+    ui.main = Instance.new("Frame", ui.screenGui)
+    ui.main.Size = UDim2.new(0, 400, 0, 450)
+    ui.main.Position = UDim2.fromScale(0.5, 0.5)
+    ui.main.AnchorPoint = Vector2.new(0.5, 0.5)
+    ui.main.BackgroundColor3 = Color3.fromRGB(28, 28, 32)
+    ui.main.BorderSizePixel = 0
+    Instance.new("UICorner", ui.main).CornerRadius = UDim.new(0, 8)
+
+    local header = Instance.new("Frame", ui.main)
+    header.Size = UDim2.new(1, 0, 0, 40)
+    header.BackgroundColor3 = Color3.fromRGB(24, 24, 26)
+    Instance.new("UICorner", header).CornerRadius = UDim.new(0, 8)
+
+    local title = Instance.new("TextLabel", header)
+    title.Size = UDim2.new(1, -50, 1, 0)
+    title.Position = UDim2.fromOffset(15, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "Animation Builder"
+    title.TextColor3 = Color3.fromRGB(240, 240, 240)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 18
+    title.TextXAlignment = Enum.TextXAlignment.Left
+
+    local closeBtn = Instance.new("TextButton", header)
+    closeBtn.Size = UDim2.fromOffset(40, 40)
+    closeBtn.Position = UDim2.new(1, 0, 0.5, 0)
+    closeBtn.AnchorPoint = Vector2.new(1, 0.5)
+    closeBtn.BackgroundTransparency = 1
+    closeBtn.Text = "X"
+    closeBtn.TextColor3 = Color3.fromRGB(255, 90, 90)
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.TextSize = 20
+
+    local scroll = Instance.new("ScrollingFrame", ui.main)
+    scroll.Size = UDim2.new(1, 0, 1, -100)
+    scroll.Position = UDim2.fromOffset(0, 40)
+    scroll.BackgroundTransparency = 1
+    scroll.BorderSizePixel = 0
+    scroll.ScrollBarThickness = 6
+    local listLayout = Instance.new("UIListLayout", scroll)
+    listLayout.Padding = UDim.new(0, 8)
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    Instance.new("UIPadding", scroll).Padding = UDim.new(0, 15)
+
+    local footer = Instance.new("Frame", ui.main)
+    footer.Size = UDim2.new(1, 0, 0, 60)
+    footer.Position = UDim2.new(0, 0, 1, -60)
+    footer.BackgroundTransparency = 1
+    
+    local saveBtn = Instance.new("TextButton", footer)
+    saveBtn.Size = UDim2.new(0.5, -15, 0.7, 0)
+    saveBtn.Position = UDim2.fromOffset(10, 10)
+    saveBtn.BackgroundColor3 = Color3.fromRGB(60, 140, 80)
+    saveBtn.Text = "Save"
+    saveBtn.TextColor3 = Color3.new(1,1,1)
+    saveBtn.Font = Enum.Font.GothamSemibold
+    saveBtn.TextSize = 16
+    Instance.new("UICorner", saveBtn).CornerRadius = UDim.new(0, 6)
+
+    local revertBtn = saveBtn:Clone()
+    revertBtn.Position = UDim2.new(0.5, 5, 0, 10)
+    revertBtn.BackgroundColor3 = Color3.fromRGB(160, 80, 80)
+    revertBtn.Text = "Revert"
+    revertBtn.Parent = footer
+    
+    -- Create input rows
+    ui.inputs = {}
+    local states = {"Idle", "Walk", "Run", "Jump", "Fall", "Climb", "Sit"}
+    for _, name in ipairs(states) do
+        local row = Instance.new("Frame", scroll)
+        row.Size = UDim2.new(1, 0, 0, 40)
+        row.BackgroundColor3 = Color3.fromRGB(36, 36, 40)
+        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
+        
+        local label = Instance.new("TextLabel", row)
+        label.Size = UDim2.new(0.25, 0, 1, 0)
+        label.Position = UDim2.fromOffset(10, 0)
+        label.BackgroundTransparency = 1
+        label.Text = name
+        label.TextColor3 = Color3.new(1,1,1)
+        label.Font = Enum.Font.GothamSemibold
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.TextSize = 15
+
+        local box = Instance.new("TextBox", row)
+        box.Size = UDim2.new(0.75, -20, 0.8, 0)
+        box.Position = UDim2.new(0.25, 0, 0.5, 0)
+        box.AnchorPoint = Vector2.new(0, 0.5)
+        box.PlaceholderText = "rbxassetid://"
+        box.ClearTextOnFocus = false
+        box.TextColor3 = Color3.new(1,1,1)
+        box.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+        box.Font = Enum.Font.Code
+        box.TextSize = 14
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+        
+        ui.inputs[name:lower()] = box
+    end
+
+    -- Logic to apply animations
+    local function applyAnims(mode)
+        local currentAnimate = localPlayer.Character and localPlayer.Character:FindFirstChild("Animate")
+        if not currentAnimate then return DoNotif("Animate script not found.", 3) end
+
+        for stateName, animId in pairs(mode == "save" and ui.inputs or self.State.OriginalAnimations) do
+            local valueObj = currentAnimate:FindFirstChild(stateName, true)
+            if valueObj then
+                local anim = valueObj:FindFirstChildOfClass("Animation")
+                if anim then
+                    if mode == "save" then
+                        local text = animId.Text -- animId is a TextBox here
+                        if tonumber(text) then
+                            anim.AnimationId = "rbxassetid://" .. text
+                        end
+                    else
+                        -- Reverting
+                        anim.AnimationId = animId -- animId is a string here
+                        local num = animId:match("%d+")
+                        if num and ui.inputs[stateName] then
+                            ui.inputs[stateName].Text = num
+                        end
+                    end
+                end
+            end
+        end
+        DoNotif(mode == "save" and "Animations saved." or "Animations reverted.", 2)
+    end
+    
+    -- Prefill UI with current/original values
+    for stateName, textBox in pairs(ui.inputs) do
+        local originalId = self.State.OriginalAnimations[stateName]
+        if originalId then
+            local num = originalId:match("%d+")
+            if num then textBox.Text = num end
+        end
+    end
+
+    -- Connect events
+    closeBtn.MouseButton1Click:Connect(function() self:DestroyUI() end)
+    saveBtn.MouseButton1Click:Connect(function() applyAnims("save") end)
+    revertBtn.MouseButton1Click:Connect(function() applyAnims("revert") end)
+    
+    -- Make draggable
+    self:_makeDraggable(ui.main, header)
+    DoNotif("Animation Builder opened.", 2)
+end
+
+---
+-- Initializes the module and registers its commands.
+--
+function Modules.AnimationBuilder:Initialize()
+    local module = self
+    for _, service in ipairs(self.Dependencies) do
+        module.Services[service] = game:GetService(service)
+    end
+
+    RegisterCommand({
+        Name = "animbuilder",
+        Aliases = {"abuilder"},
+        Description = "Toggles a UI to edit your character's default animations."
+    }, function()
+        if module.State.UI then
+            module:DestroyUI()
+        else
+            module:CreateUI()
         end
     end)
 end
@@ -6668,7 +10442,7 @@ RegisterCommand({Name = "stats", Aliases = {}, Description = "Edit and lock your
 RegisterCommand({Name = "zgui", Aliases = {"upd3", "zui"}, Description = "For Zombie Game upd3"}, function() loadstringCmd("https://raw.githubusercontent.com/zukatechdevelopment-ux/luaprojectse3/refs/heads/main/ZGUI.txt", "Loaded GUI") end)
 RegisterCommand({Name = "swordbot", Aliases = {"sf", "sfbot"}, Description = "Auto Sword Fighter, use E and R"}, function() loadstringCmd("https://raw.githubusercontent.com/bloxtech1/luaprojects2/refs/heads/main/swordnpc", "Bot loaded.") end)
 RegisterCommand({Name = "reload", Aliases = {"update", "exec"}, Description = "Reloads and re-executes the admin script from the GitHub source."}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/Main.lua", "Reloading admin from source...") end)
-RegisterCommand({Name = "zoneui", Aliases = {"guns"}, Description = "Loads the Best Gun Giver for Zombie Zone" }, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/ZombieZone.lua", "Loaded") end)
+RegisterCommand({Name = "zoneui", Aliases = {"guns"}, Description = "Loads the Best Gun Giver for Zombie Zone" }, function() loadstringCmd("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/Nice.lua", "Loaded") end)
 RegisterCommand({Name = "ibtools", Aliases = {"btools"}, Description = "Upgraded Gui For Btools"}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/IBtools.txt", "Loading Revamped Btools Gui") end)
 RegisterCommand({Name = "ketamine", Aliases = {"kspy"}, Description = "Warning: may crash on xeno"}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/remotes.lua", "Loading SimpleSpy...") end)
 RegisterCommand({Name = "nocooldown", Aliases = {"ncd"}, Description = "Warning: Broken due to xeno."}, function() loadstringCmd("https://raw.githubusercontent.com/haileybae12/callumsscript/refs/heads/main/NocooldownsZombieUpd3.txt", "Loading Cooldownremover...") end)
@@ -6677,7 +10451,7 @@ RegisterCommand({Name = "antiafk", Aliases = {"npcmode"}, Description = "Avoid b
 RegisterCommand({Name = "scriptblox", Aliases = {}, Description = "Loads the script blox api."}, function() loadstringCmd("https://raw.githubusercontent.com/AZYsGithub/chillz-workshop/main/ScriptSearcher", "Loading API..") end)
 RegisterCommand({Name = "freakyfling", Aliases = {"ffling"}, Description = "Loads the Kawaii. GUI"}, function() loadstringCmd("https://raw.githubusercontent.com/hellohellohell012321/KAWAII-FREAKY-FLING/main/kawaii_freaky_fling.lua", "Loading GUI..") end)
 RegisterCommand({Name = "rem", Aliases = {}, Description = "In game exploit creation kit.."}, function() loadstringCmd("https://e-vil.com/anbu/rem.lua", "Loading Rem.") end)
-RegisterCommand({Name = "copyconsole", Aliases = {copy}, Description = "In game exploit creation kit.."}, function() loadstringCmd("https://raw.githubusercontent.com/scriptlisenbe-stack/luaprojectse3/refs/heads/main/consolecopy.lua", "Copy Console Activated.") end)
+RegisterCommand({Name = "copyconsole", Aliases = {"copy"}, Description = "Allows you to copy errors from the console.."}, function() loadstringCmd("https://raw.githubusercontent.com/scriptlisenbe-stack/luaprojectse3/refs/heads/main/consolecopy.lua", "Copy Console Activated.") end)
 RegisterCommand({Name = "simplespy", Aliases = {"ispy"}, Description = "Remote Functions"}, function() loadstringCmd("https://raw.githubusercontent.com/ltseverydayyou/uuuuuuu/main/simplee%20spyyy%20mobilee", "Loading SimpleSpy...") end)
 function processCommand(message)
     if not (message:sub(1, #Prefix) == Prefix) then
