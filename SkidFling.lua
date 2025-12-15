@@ -151,7 +151,7 @@ local function createFlingGui()
 	titleLabel.Position = UDim2.new(0, 5, 0, 0)
 	titleLabel.BackgroundTransparency = 1
 	titleLabel.Font = Enum.Font.SourceSansBold
-	titleLabel.Text = "Collision Fling"
+	titleLabel.Text = "zukas leet fling!"
 	titleLabel.TextColor3 = Color3.fromRGB(200, 220, 255)
 	titleLabel.TextSize = 16
 	titleLabel.TextXAlignment = Enum.TextXAlignment.Left
