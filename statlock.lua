@@ -1,5 +1,6 @@
 --[[
-made by zuka
+    made by zuka
+    
 ]]
 
 --======================================================================================
@@ -9,7 +10,8 @@ made by zuka
 local Services = {
     Players = game:GetService("Players"),
     RunService = game:GetService("RunService"),
-    CoreGui = game:GetService("CoreGui")
+    CoreGui = game:GetService("CoreGui"),
+    TweenService = game:GetService("TweenService")
 }
 
 local LocalPlayer = Services.Players.LocalPlayer
@@ -22,14 +24,16 @@ local Editor = {
         HeartbeatConnection = nil,
         ToolConnections = {}
     },
+    -- [STYLISTIC REFACTOR] - Theme updated to match ZukasAdmin
     Config = {
-        WindowTitle = "Humanoid & Tool Editor",
-        AccentColor = Color3.fromRGB(180, 200, 255),
-        BackgroundColor = Color3.fromRGB(35, 35, 45),
-        HeaderColor = Color3.fromRGB(25, 25, 35),
-        ItemColor = Color3.fromRGB(60, 60, 70),
-        TextColor = Color3.fromRGB(220, 220, 220),
-        Font = Enum.Font.Code,
+        WindowTitle = "Zuka's Prop Editor",
+        AccentColor = Color3.fromRGB(0, 255, 255),       -- Cyan Accent
+        BackgroundColor = Color3.fromRGB(34, 32, 38),   -- Main Background
+        HeaderColor = Color3.fromRGB(25, 25, 35),       -- Title Bar Background
+        ItemColor = Color3.fromRGB(48, 48, 58),         -- List Item Background
+        TextColor = Color3.fromRGB(240, 240, 240),      -- Primary Text
+        Font = Enum.Font.Gotham,
+        BoldFont = Enum.Font.GothamSemibold,
         MainSize = UDim2.new(0, 340, 0, 450)
     }
 }
@@ -97,21 +101,23 @@ function Editor:Populate()
 
     local layoutCounter = 0
 
+    -- [STYLISTIC REFACTOR] - Updated header styling
     local function addHeader(text)
         layoutCounter += 1
         local header = Instance.new("TextLabel", propertyList)
         header.Name = text .. "Header"
-        header.Size = UDim2.new(1, -10, 0, 20)
-        header.Text = (" -- %s -- "):format(text)
+        header.Size = UDim2.new(1, 0, 0, 24)
+        header.Text = ("- %s -"):format(text)
         header.TextColor3 = self.Config.AccentColor
-        header.Font = self.Config.Font
+        header.Font = self.Config.BoldFont
+        header.TextSize = 16
         header.BackgroundTransparency = 1
         header.LayoutOrder = layoutCounter
         return header
     end
 
     -- 1. Humanoid Properties (Static List)
-    addHeader("Humanoid Properties")
+    addHeader("Humanoid")
     local humanoidProps = {"WalkSpeed", "JumpPower", "JumpHeight", "HipHeight", "MaxHealth", "Health"}
     for _, propName in ipairs(humanoidProps) do
         local success, value = pcall(function() return humanoid[propName] end)
@@ -121,35 +127,14 @@ function Editor:Populate()
         end
     end
 
-    --[[
-        HOW ATTRIBUTES ARE DISCOVERED:
-        To answer your question, this is the core of the attribute discovery system.
-        Instead of targeting just a few known objects, we perform a comprehensive scan
-        of the entire character model.
-
-        1.  A dictionary `objectsToScan` is created to hold every object we want to check
-            for attributes. We give it a descriptive name for the UI header.
-        2.  We iterate through every single descendant of the character model.
-        3.  For each descendant, if it's a type that commonly holds attributes (like a
-            BasePart or a Tool), we add it to our dictionary.
-        4.  Finally, we loop through our collected dictionary and create a UI section for
-            any object that actually has one or more attributes set on it.
-
-        This ensures that attributes on ANY part of the character, including parts inside
-        of tools, will be found and displayed automatically.
-    ]]
-    -- 2. Comprehensive Attribute Collection
     local objectsToScan = {}
     if character then
-        -- Add primary targets with clear names
         objectsToScan["Character"] = character
         objectsToScan["Humanoid"] = humanoid
         local rootPart = character:FindFirstChild("HumanoidRootPart")
         if rootPart then objectsToScan["HumanoidRootPart"] = rootPart end
 
-        -- Scan all descendants for any other potential attribute carriers
         for _, descendant in ipairs(character:GetDescendants()) do
-            -- Add relevant objects, creating a unique name to avoid collisions
             local uniqueName = ("%s (%s)"):format(descendant.Name, descendant.ClassName)
             if not objectsToScan[uniqueName] and (descendant:IsA("BasePart") or descendant:IsA("Tool")) then
                 objectsToScan[uniqueName] = descendant
@@ -159,10 +144,10 @@ function Editor:Populate()
     
     -- 3. Populate Attributes by Object
     for objectName, parentObject in pairs(objectsToScan) do
-        if not parentObject or not parentObject.Parent then continue end -- Ensure object is valid
+        if not parentObject or not parentObject.Parent then continue end
         
         local attributes = parentObject:GetAttributes()
-        if not next(attributes) then continue end -- Skip if object has no attributes
+        if not next(attributes) then continue end
 
         local numericAttributes, booleanAttributes = {}, {}
         for name, value in pairs(attributes) do
@@ -193,22 +178,32 @@ end
 -- UI Element Creation & Toggling
 --======================================================================================
 
+-- [STYLISTIC REFACTOR] - Reworked row creation to match new theme
 function Editor:CreateNumberRow(name, value, isAttribute, parentObject, layoutOrder)
     local C, S = self.Config, self.State
     local propertyList = S.UI.MainFrame.PropertyList
+    
     local frame = Instance.new("Frame", propertyList)
-    frame.Name, frame.Size, frame.BackgroundColor3, frame.LayoutOrder = name .. "Row", UDim2.new(1, -10, 0, 30), C.ItemColor, layoutOrder
+    frame.Name, frame.Size, frame.BackgroundColor3, frame.LayoutOrder = name .. "Row", UDim2.new(1, 0, 0, 30), C.ItemColor, layoutOrder
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+
     local nameLabel = Instance.new("TextLabel", frame)
     nameLabel.Size, nameLabel.Text, nameLabel.Font, nameLabel.TextSize, nameLabel.TextColor3, nameLabel.TextXAlignment = UDim2.new(0.4, 0, 1, 0), "  " .. name, C.Font, 14, C.TextColor, Enum.TextXAlignment.Left
+    
     local valueBox = Instance.new("TextBox", frame)
-    valueBox.Size, valueBox.Position, valueBox.BackgroundColor3, valueBox.Font, valueBox.TextSize, valueBox.TextColor3, valueBox.Text, valueBox.ClearTextOnFocus = UDim2.new(0.4, 0, 1, 0), UDim2.new(0.4, 0, 0, 0), C.HeaderColor, C.Font, 14, Color3.new(1, 1, 1), tostring(value), false
+    valueBox.Size, valueBox.Position, valueBox.BackgroundColor3, valueBox.Font, valueBox.TextSize, valueBox.TextColor3, valueBox.Text, valueBox.ClearTextOnFocus = UDim2.new(0.4, -5, 1, -6), UDim2.new(0.4, 5, 0.5, 0), C.HeaderColor, C.Font, 14, Color3.new(1, 1, 1), tostring(value), false
+    valueBox.AnchorPoint = Vector2.new(0, 0.5)
+    Instance.new("UICorner", valueBox).CornerRadius = UDim.new(0, 4)
+
     local lockButton = Instance.new("TextButton", frame)
-    lockButton.Name, lockButton.Size, lockButton.Position, lockButton.Font, lockButton.TextSize, lockButton.TextColor3 = "LockButton", UDim2.new(0.2, 0, 1, 0), UDim2.new(0.8, 0, 0, 0), C.Font, 14, Color3.new(1, 1, 1)
+    lockButton.Name, lockButton.Size, lockButton.Position, lockButton.Font, lockButton.TextSize, lockButton.TextColor3 = "LockButton", UDim2.new(0.2, -5, 1, -6), UDim2.new(0.8, 5, 0.5, 0), C.BoldFont, 14, Color3.new(1, 1, 1)
+    lockButton.AnchorPoint = Vector2.new(0, 0.5)
+    Instance.new("UICorner", lockButton).CornerRadius = UDim.new(0, 4)
 
     if S.ActiveOverrides[name] then
-        lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(20, 120, 20), "Locked"
+        lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(40, 140, 80), "LOCKED"
     else
-        lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(120, 20, 20), "Lock"
+        lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(160, 50, 60), "LOCK"
     end
 
     lockButton.MouseButton1Click:Connect(function()
@@ -216,10 +211,10 @@ function Editor:CreateNumberRow(name, value, isAttribute, parentObject, layoutOr
         if not numValue then return end
         if S.ActiveOverrides[name] then
             S.ActiveOverrides[name] = nil
-            lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(120, 20, 20), "Lock"
+            lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(160, 50, 60), "LOCK"
         else
             S.ActiveOverrides[name] = { Value = numValue, IsAttribute = isAttribute, ParentObject = parentObject }
-            lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(20, 120, 20), "Locked"
+            lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(40, 140, 80), "LOCKED"
             if not S.HeartbeatConnection then
                 S.HeartbeatConnection = Services.RunService.Heartbeat:Connect(function() self:ForceProperties() end)
             end
@@ -239,34 +234,43 @@ end
 function Editor:CreateBooleanRow(name, value, isAttribute, parentObject, layoutOrder)
     local C, S = self.Config, self.State
     local propertyList = S.UI.MainFrame.PropertyList
+
     local frame = Instance.new("Frame", propertyList)
-    frame.Name, frame.Size, frame.BackgroundColor3, frame.LayoutOrder = name .. "Row", UDim2.new(1, -10, 0, 30), C.ItemColor, layoutOrder
+    frame.Name, frame.Size, frame.BackgroundColor3, frame.LayoutOrder = name .. "Row", UDim2.new(1, 0, 0, 30), C.ItemColor, layoutOrder
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+
     local nameLabel = Instance.new("TextLabel", frame)
     nameLabel.Size, nameLabel.Text, nameLabel.Font, nameLabel.TextSize, nameLabel.TextColor3, nameLabel.TextXAlignment = UDim2.new(0.4, 0, 1, 0), "  " .. name, C.Font, 14, C.TextColor, Enum.TextXAlignment.Left
+
     local valueButton = Instance.new("TextButton", frame)
-    valueButton.Size, valueButton.Position, valueButton.Font, valueButton.TextSize, valueButton.TextColor3 = UDim2.new(0.4, 0, 1, 0), UDim2.new(0.4, 0, 0, 0), C.Font, 14, Color3.new(1, 1, 1)
+    valueButton.Size, valueButton.Position, valueButton.Font, valueButton.TextSize, valueButton.TextColor3 = UDim2.new(0.4, -5, 1, -6), UDim2.new(0.4, 5, 0.5, 0), C.BoldFont, 14, Color3.new(1, 1, 1)
+    valueButton.AnchorPoint = Vector2.new(0, 0.5)
+    Instance.new("UICorner", valueButton).CornerRadius = UDim.new(0, 4)
+    
     local lockButton = Instance.new("TextButton", frame)
-    lockButton.Name, lockButton.Size, lockButton.Position, lockButton.Font, lockButton.TextSize, lockButton.TextColor3 = "LockButton", UDim2.new(0.2, 0, 1, 0), UDim2.new(0.8, 0, 0, 0), C.Font, 14, Color3.new(1, 1, 1)
+    lockButton.Name, lockButton.Size, lockButton.Position, lockButton.Font, lockButton.TextSize, lockButton.TextColor3 = "LockButton", UDim2.new(0.2, -5, 1, -6), UDim2.new(0.8, 5, 0.5, 0), C.BoldFont, 14, Color3.new(1, 1, 1)
+    lockButton.AnchorPoint = Vector2.new(0, 0.5)
+    Instance.new("UICorner", lockButton).CornerRadius = UDim.new(0, 4)
     
     local currentValue = value
     local function updateValueButton()
-        valueButton.Text = tostring(currentValue)
+        valueButton.Text = tostring(currentValue):upper()
         valueButton.BackgroundColor3 = currentValue and Color3.fromRGB(70, 120, 90) or Color3.fromRGB(120, 70, 70)
         if isAttribute then parentObject:SetAttribute(name, currentValue) end
         if S.ActiveOverrides[name] then S.ActiveOverrides[name].Value = currentValue end
     end
     updateValueButton()
     
-    if S.ActiveOverrides[name] then lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(20, 120, 20), "Locked"
-    else lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(120, 20, 20), "Lock" end
+    if S.ActiveOverrides[name] then lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(40, 140, 80), "LOCKED"
+    else lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(160, 50, 60), "LOCK" end
     
     valueButton.MouseButton1Click:Connect(function() currentValue = not currentValue; updateValueButton() end)
     lockButton.MouseButton1Click:Connect(function()
         if S.ActiveOverrides[name] then
-            S.ActiveOverrides[name] = nil; lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(120, 20, 20), "Lock"
+            S.ActiveOverrides[name] = nil; lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(160, 50, 60), "LOCK"
         else
             S.ActiveOverrides[name] = { Value = currentValue, IsAttribute = isAttribute, ParentObject = parentObject }
-            lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(20, 120, 20), "Locked"
+            lockButton.BackgroundColor3, lockButton.Text = Color3.fromRGB(40, 140, 80), "LOCKED"
             if not S.HeartbeatConnection then S.HeartbeatConnection = Services.RunService.Heartbeat:Connect(function() self:ForceProperties() end) end
         end
     end)
@@ -280,43 +284,66 @@ function Editor:ToggleMinimize()
     local propertyList = mainFrame.PropertyList
     local minimizeButton = mainFrame.TitleLabel.MinimizeButton
 
-    if S.IsMinimized then
-        propertyList.Visible = false
-        mainFrame.Size = UDim2.new(C.MainSize.X.Scale, C.MainSize.X.Offset, 0, 30) -- Title bar height
-        minimizeButton.Text = "+"
-    else
-        propertyList.Visible = true
-        mainFrame.Size = C.MainSize -- Restore original size
-        minimizeButton.Text = "_"
-    end
+    local targetSize = S.IsMinimized and UDim2.new(C.MainSize.X.Scale, C.MainSize.X.Offset, 0, 30) or C.MainSize
+    local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    
+    Services.TweenService:Create(mainFrame, tweenInfo, {Size = targetSize}):Play()
+    propertyList.Visible = not S.IsMinimized
+    minimizeButton.Text = S.IsMinimized and "+" or "_"
 end
 
 function Editor:CreateUI()
     if self.State.UI then return end
     local C, S = self.Config, self.State
+
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name, screenGui.ResetOnSpawn, screenGui.Parent = "CallumHumanoidEditor", false, Services.CoreGui
+    screenGui.Name, screenGui.ResetOnSpawn, screenGui.ZIndexBehavior, screenGui.Parent = "CallumHumanoidEditor", false, Enum.ZIndexBehavior.Global, Services.CoreGui
     S.UI = screenGui
+
     local mainFrame = Instance.new("Frame", screenGui)
     mainFrame.Name, mainFrame.Size, mainFrame.Position, mainFrame.BackgroundColor3, mainFrame.Draggable, mainFrame.Active = "MainFrame", C.MainSize, UDim2.new(0.5, -C.MainSize.X.Offset / 2, 0.5, -C.MainSize.Y.Offset / 2), C.BackgroundColor, true, true
+    Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
+
+    -- [STYLISTIC ADDITION] - Add pulsating glowing border
+    local uiStroke = Instance.new("UIStroke", mainFrame)
+    uiStroke.Color = C.AccentColor
+    uiStroke.Thickness = 1.5
+    uiStroke.Transparency = 0.4
+    
+    local glowConnection = Services.RunService.RenderStepped:Connect(function()
+        if not (uiStroke and uiStroke.Parent) then
+            glowConnection:Disconnect()
+            return
+        end
+        local sine = math.sin(os.clock() * 5)
+        uiStroke.Thickness = 1.5 + (sine * 0.5)
+        uiStroke.Transparency = 0.4 + (sine * 0.2)
+    end)
+    screenGui.Destroying:Connect(function() glowConnection:Disconnect() end)
+
     local titleLabel = Instance.new("TextLabel", mainFrame)
-    titleLabel.Name, titleLabel.Size, titleLabel.BackgroundColor3, titleLabel.Text, titleLabel.Font, titleLabel.TextSize, titleLabel.TextColor3 = "TitleLabel", UDim2.new(1, 0, 0, 30), C.HeaderColor, C.WindowTitle, C.Font, 16, C.AccentColor
+    titleLabel.Name, titleLabel.Size, titleLabel.BackgroundColor3, titleLabel.Text, titleLabel.Font, titleLabel.TextSize, titleLabel.TextColor3 = "TitleLabel", UDim2.new(1, 0, 0, 30), C.HeaderColor, "  " .. C.WindowTitle, C.BoldFont, 16, C.TextColor
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
     local propertyList = Instance.new("ScrollingFrame", mainFrame)
-    propertyList.Name, propertyList.Size, propertyList.Position, propertyList.BackgroundColor3, propertyList.AutomaticCanvasSize, propertyList.ScrollBarImageColor3 = "PropertyList", UDim2.new(1, 0, 1, -30), UDim2.new(0, 0, 0, 30), C.BackgroundColor, Enum.AutomaticSize.Y, C.AccentColor
+    propertyList.Name, propertyList.Size, propertyList.Position, propertyList.BackgroundTransparency, propertyList.AutomaticCanvasSize, propertyList.ScrollBarImageColor3, propertyList.BorderSizePixel, propertyList.ScrollBarThickness = "PropertyList", UDim2.new(1, -10, 1, -35), UDim2.new(0.5, 0, 0, 30), 1, Enum.AutomaticSize.Y, C.AccentColor, 0, 6
+    propertyList.AnchorPoint = Vector2.new(0.5, 0)
+    
     local listLayout = Instance.new("UIListLayout", propertyList)
     listLayout.Padding, listLayout.SortOrder, listLayout.HorizontalAlignment = UDim.new(0, 5), Enum.SortOrder.LayoutOrder, Enum.HorizontalAlignment.Center
 
     local function createTitleButton(name, text, position, onClick)
         local button = Instance.new("TextButton", titleLabel)
-        button.Name, button.Size, button.Position, button.BackgroundColor3, button.Text, button.Font, button.TextSize, button.TextColor3 = name, UDim2.new(0, 30, 1, 0), UDim2.new(1, position, 0, 0), C.HeaderColor, text, C.Font, 16, C.TextColor
+        button.Name, button.Size, button.Position, button.BackgroundTransparency, button.Text, button.Font, button.TextSize, button.TextColor3 = name, UDim2.new(0, 24, 0, 24), UDim2.new(1, position, 0.5, 0), 1, text, C.BoldFont, 20, C.TextColor
+        button.AnchorPoint = Vector2.new(1, 0.5)
         button.MouseButton1Click:Connect(onClick)
         return button
     end
 
-    createTitleButton("CloseButton", "X", -30, function() screenGui.Enabled = false end)
-    createTitleButton("UnlockAllButton", "U", -60, function() S.ActiveOverrides = {}; self:Populate() end)
-    createTitleButton("RefreshButton", "R", -90, function() self:Populate() end)
-    createTitleButton("MinimizeButton", "_", -120, function() self:ToggleMinimize() end) -- New minimize button
+    createTitleButton("CloseButton", "X", -15, function() screenGui.Enabled = false end)
+    createTitleButton("UnlockAllButton", "U", -45, function() S.ActiveOverrides = {}; self:Populate() end)
+    createTitleButton("RefreshButton", "R", -75, function() self:Populate() end)
+    createTitleButton("MinimizeButton", "_", -105, function() self:ToggleMinimize() end)
 end
 
 --======================================================================================
