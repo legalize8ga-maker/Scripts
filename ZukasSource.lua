@@ -2,7 +2,7 @@
 made by zuka @OverZuka on roblox
 v4
 
-
+github - loadstring(game:HttpGet("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/ZukasSource.lua"))()
 
 --]]
 
@@ -11386,7 +11386,7 @@ end)
 RegisterCommand({Name = "dex", Aliases = {}, Description = "Loads Dex"}, function()
 loadstringCmd("https://raw.githubusercontent.com/zukatechdevelopment-ux/luaprojectse3/refs/heads/main/CustomDex.lua", "we lit")
 end)
-RegisterCommand({Name = "funbox", Aliases = {"fbox"}, Description = "Loads the Original Zuka Hub"}, function() loadstringCmd("https://raw.githubusercontent.com/bloxtech1/luaprojects2/refs/heads/main/ZukasFunBox.lua", "Loading Zuka's FunBox...") end)
+RegisterCommand({Name = "update", Aliases = {"refresh"}, Description = "Updates the admin by loading it's loadstring."}, function() loadstringCmd("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/ZukasSource.lua", "Loading Zuka's FunBox...") end)
 
 RegisterCommand({Name = "zukahub", Aliases = {"zuka"}, Description = "Loads the Zuka Hub"}, function() loadstringCmd("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/ZukaHub.lua", "Loading Zuka's Hub...") end)
 
