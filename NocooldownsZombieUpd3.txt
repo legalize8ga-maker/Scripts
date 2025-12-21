@@ -1,0 +1,91 @@
+-- For zombie game upd3
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local success, result
+
+
+success, result = pcall(function()
+    local MeleeFunctions = require(ReplicatedStorage.Modules.MeleeFunctions)
+
+
+
+    MeleeFunctions.AddCooldown = function() end
+
+    MeleeFunctions.CheckForCooldown = function() return false end
+
+    print("[PATCHER]: Global Melee Cooldown system successfully bypassed.")
+end)
+
+if not success then
+    warn("[PATCHER_ERROR]: Could not patch MeleeFunctions. It may have been moved or renamed.", result)
+end
+
+
+-- // Part 2: Increase Shovel Attack Speed
+
+success, result = pcall(function()
+    local ShovelModule = require(ReplicatedStorage.Modules.Items.Shovel)
+    
+    
+    local originalShovelNew = ShovelModule.new
+    ShovelModule.new = function(...)
+        local shovelObject = originalShovelNew(...)
+        
+        if shovelObject and shovelObject.AnimationTracks and shovelObject.AnimationTracks.Attack then
+            shovelObject.AnimationTracks.Attack.Speed = 1.30
+        end
+        
+        -- Finally, return the modified object so the game can use it.
+        return shovelObject
+    end
+
+    print("[PATCHER]: Shovel attack speed patch applied. New shovels will be 75% faster.")
+end)
+
+if not success then
+    warn("[PATCHER_ERROR]: Could not patch the Shovel module.", result)
+end
+
+
+
+success, result = pcall(function()
+    local SpitModule = require(ReplicatedStorage.Modules.Items.Spit)
+    
+
+    local originalFireGun = SpitModule.FireGun
+    SpitModule.FireGun = function(spitObject, mouseX, mouseY)
+        local headPosition = spitObject.Character.Head.Position
+        
+        local localPlayer = game:GetService("Players").LocalPlayer
+        local cameraRay = workspace.CurrentCamera:ScreenPointToRay(mouseX, mouseY)
+        local raycastParams = RaycastParams.new()
+        raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+        raycastParams.FilterDescendantsInstances = { localPlayer.Character }
+        local raycastResult = workspace:Raycast(cameraRay.Origin, cameraRay.Direction * 1000, raycastParams)
+        local aimPosition = raycastResult and raycastResult.Position or (cameraRay.Origin + cameraRay.Direction * 1000)
+
+        local directionVector = aimPosition - headPosition
+        
+        ReplicatedStorage.Remotes.ZombieRelated.AcidSpit:FireServer(headPosition, aimPosition)
+
+        local projectileMagnitude = directionVector.Magnitude
+        if projectileMagnitude > 41 then
+            directionVector = directionVector.Unit * 40
+            projectileMagnitude = 40
+        end
+
+        local timeToTarget = math.log(1.001 + projectileMagnitude * 0.01)
+        local projectileVelocity = directionVector / timeToTarget + Vector3.new(0, workspace.Gravity * 0.5 * timeToTarget, 0)
+        
+        require(ReplicatedStorage.VisualFunctions.AcidProjectile)(headPosition, projectileVelocity)
+    end
+    
+    print("[PATCHER]: Spit item cooldown successfully bypassed.")
+end)
+
+if not success then
+    warn("[PATCHER_ERROR]: Could not patch the Spit module.", result)
+end
+
+
+print("[PATCHER]: All patches have been deployed. Enjoy.")
