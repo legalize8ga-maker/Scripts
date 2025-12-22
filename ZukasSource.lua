@@ -1,6 +1,6 @@
 --[[
 made by zuka @OverZuka on roblox
-v4
+v4.5 Monday, December 22nd
 
 github - loadstring(game:HttpGet("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/ZukasSource.lua"))()
 
@@ -211,7 +211,7 @@ function Utilities.findPlayer(inputName)
     table.insert(CommandInfo, info)
 end
 
-local function loadAimbotGUI()
+local function loadAimbotGUI(args)
 	-- This function encapsulates the entire aimbot script.
 	-- It's called when the user runs the ';aimbot' command.
 
@@ -219,7 +219,7 @@ local function loadAimbotGUI()
 	local CoreGui = game:GetService("CoreGui")
 
 	-- Check if the GUI already exists to prevent duplicates
-	if CoreGui:FindFirstChild("UTS_CGE_Suite") then
+	if CoreGui:FindFirstChild("UTS_CGE_Suite") and not args then
 		if DoNotif then
 			DoNotif("Aimbot GUI is already open.", 2)
 		else
@@ -228,16 +228,24 @@ local function loadAimbotGUI()
 		return
 	end
 	
+	if CoreGui:FindFirstChild("UTS_CGE_Suite") then
+		-- GUI exists, but we are passing new arguments to it.
+		-- This is where you would send events to an already-running GUI if it was fully modular.
+		-- For this structure, we'll just notify and let the logic at the end handle it.
+	end
+
 	local success, err = pcall(function()
 		-- Services
 		local UserInputService = game:GetService("UserInputService")
 		local RunService = game:GetService("RunService")
 		local Players = game:GetService("Players")
 		local Workspace = game:GetService("Workspace")
+		local TweenService = game:GetService("TweenService")
 
 		local LocalPlayer = Players.LocalPlayer
 		local Camera = Workspace.CurrentCamera
-
+		
+		local janitor = {}
 
         local function SetupSilentAimHook()
             if not (getrawmetatable and setreadonly and newcclosure and getnamecallmethod) then
@@ -264,7 +272,6 @@ local function loadAimbotGUI()
                                 return originalNamecall(unpack(args))
                             end
                         end
-
                         if method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
                             local rayArg = args[2]
                             if typeof(rayArg) == "Ray" then
@@ -297,25 +304,32 @@ local function loadAimbotGUI()
 			corner.Parent = element
 		end
 
-		local MainScreenGui = Instance.new("ScreenGui");
+		local MainScreenGui = CoreGui:FindFirstChild("UTS_CGE_Suite") or Instance.new("ScreenGui");
 		MainScreenGui.Name = "UTS_CGE_Suite";
 		MainScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global;
 		MainScreenGui.ResetOnSpawn = false;
 
-		MainScreenGui.Destroying:Connect(function()
-			cleanupSilentAimHook()
-		end)
+		if not MainScreenGui.Parent then
+			table.insert(janitor, MainScreenGui.Destroying:Connect(function()
+				cleanupSilentAimHook()
+				for _, connection in ipairs(janitor) do
+					connection:Disconnect()
+				end
+			end))
+			MainScreenGui.Parent = CoreGui;
+		end
 		
-		MainScreenGui.Parent = CoreGui;
+		local MainWindow = MainScreenGui:FindFirstChild("MainWindow")
+		if MainWindow then MainWindow:Destroy() end -- Destroy old window to redraw
 
-		local explorerWindow = nil
 		getgenv().TargetScope = Workspace
 		getgenv().TargetIndex = {}
 		getgenv().silentAimEnabled = false
 		getgenv().ZukaSilentAimTarget = nil
 		
-
+		local explorerWindow = nil
 		local function createExplorerWindow(statusLabel, indexerUpdateSignal)
+			-- This function remains unchanged
 			if explorerWindow and explorerWindow.Parent then
 				explorerWindow.Visible = not explorerWindow.Visible;
 				return explorerWindow
@@ -355,9 +369,7 @@ local function loadAimbotGUI()
 			closeButton.TextColor3 = Color3.fromRGB(255, 255, 255);
 			closeButton.TextSize = 14;
 			makeUICorner(closeButton, 6);
-			closeButton.MouseButton1Click:Connect(function()
-				explorerFrame.Visible = false
-			end);
+			table.insert(janitor, closeButton.MouseButton1Click:Connect(function() explorerFrame.Visible = false end));
 			local treeScrollView = Instance.new("ScrollingFrame", explorerFrame);
 			treeScrollView.Position = UDim2.new(0,0,0,30);
 			treeScrollView.Size = UDim2.new(1, 0, 1, -30);
@@ -367,108 +379,15 @@ local function loadAimbotGUI()
 			uiListLayout.SortOrder = Enum.SortOrder.LayoutOrder;
 			uiListLayout.Padding = UDim.new(0, 1);
 			local contextMenu = nil;
-			local function closeContextMenu()
-				if contextMenu and contextMenu.Parent then
-					contextMenu:Destroy()
-				end
-			end;
-			UserInputService.InputBegan:Connect(function(input)
-				if not (contextMenu and contextMenu:IsAncestorOf(input.UserInputType)) and input.UserInputType ~= Enum.UserInputType.MouseButton2 then
-					closeContextMenu()
-				end
-			end);
-
-			local function createTree(parentInstance, parentUi, indentLevel)
-				for _, child in ipairs(parentInstance:GetChildren()) do
-					local itemFrame = Instance.new("Frame");
-					itemFrame.Name = child.Name;
-					itemFrame.Size = UDim2.new(1, 0, 0, 22);
-					itemFrame.BackgroundTransparency = 1;
-					itemFrame.Parent = parentUi;
-					local hasChildren = #child:GetChildren() > 0;
-					local toggleButton = Instance.new("TextButton");
-					toggleButton.Size = UDim2.new(0, 20, 0, 20);
-					toggleButton.Position = UDim2.fromOffset(indentLevel * 12, 1);
-					toggleButton.BackgroundColor3 = Color3.fromRGB(80, 80, 100);
-					toggleButton.Font = Enum.Font.Code;
-					toggleButton.TextSize = 14;
-					toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255);
-					toggleButton.Text = hasChildren and "[+]" or "[-]";
-					toggleButton.Parent = itemFrame;
-					local nameButton = Instance.new("TextButton");
-					nameButton.Size = UDim2.new(1, -((indentLevel * 12) + 22), 0, 20);
-					nameButton.Position = UDim2.fromOffset((indentLevel * 12) + 22, 1);
-					nameButton.BackgroundColor3 = Color3.fromRGB(60, 60, 70);
-					nameButton.Font = Enum.Font.Code;
-					nameButton.TextSize = 14;
-					nameButton.TextColor3 = Color3.fromRGB(220, 220, 220);
-					nameButton.Text = " " .. child.Name .. " [" .. child.ClassName .. "]";
-					nameButton.TextXAlignment = Enum.TextXAlignment.Left;
-					nameButton.Parent = itemFrame;
-					local childContainer = Instance.new("Frame", itemFrame);
-					childContainer.Name = "ChildContainer";
-					childContainer.Size = UDim2.new(1, 0, 0, 0);
-					childContainer.Position = UDim2.new(0, 0, 1, 0);
-					childContainer.BackgroundTransparency = 1;
-					childContainer.ClipsDescendants = true;
-					local childLayout = Instance.new("UIListLayout", childContainer);
-					childLayout.SortOrder = Enum.SortOrder.LayoutOrder;
-					itemFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-						childContainer.Size = UDim2.new(1, 0, 0, childLayout.AbsoluteContentSize.Y);
-						itemFrame.Size = UDim2.new(1, 0, 0, 22 + childContainer.AbsoluteSize.Y)
-					end);
-					childLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-						childContainer.Size = UDim2.new(1, 0, 0, childLayout.AbsoluteContentSize.Y);
-						itemFrame.Size = UDim2.new(1, 0, 0, 22 + childContainer.AbsoluteSize.Y)
-					end);
-					
-					toggleButton.MouseButton1Click:Connect(function()
-						local isExpanded = childContainer:FindFirstChildOfClass("Frame") ~= nil;
-						if not hasChildren then return end;
-						if isExpanded then
-							for _, v in ipairs(childContainer:GetChildren()) do
-								if v:IsA("Frame") then v:Destroy() end
-							end;
-							toggleButton.Text = "[+]"
-						else
-							createTree(child, childContainer, indentLevel + 1);
-							toggleButton.Text = "[-]"
-						end
-					end)
-					
-					nameButton.MouseButton2Click:Connect(function()
-						closeContextMenu();
-						if child:IsA("Folder") or child:IsA("Model") or child:IsA("Workspace") then
-							contextMenu = Instance.new("Frame");
-							contextMenu.Size = UDim2.new(0, 150, 0, 30);
-							contextMenu.Position = UDim2.fromOffset(UserInputService:GetMouseLocation().X, UserInputService:GetMouseLocation().Y);
-							contextMenu.BackgroundColor3 = Color3.fromRGB(25, 25, 35);
-							contextMenu.BorderSizePixel = 1;
-							contextMenu.BorderColor3 = Color3.fromRGB(80, 80, 80);
-							contextMenu.Parent = MainScreenGui;
-							local setScopeBtn = Instance.new("TextButton", contextMenu);
-							setScopeBtn.Size = UDim2.new(1, 0, 1, 0);
-							setScopeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60);
-							setScopeBtn.TextColor3 = Color3.fromRGB(200, 220, 255);
-							setScopeBtn.Font = Enum.Font.Code;
-							setScopeBtn.Text = "Set as Target Scope";
-							setScopeBtn.MouseButton1Click:Connect(function()
-								getgenv().TargetScope = child;
-								statusLabel.Text = "Scope set to: " .. child.Name;
-								indexerUpdateSignal:Fire();
-								closeContextMenu()
-							end)
-						end
-					end)
-				end
-			end
+			local function closeContextMenu() if contextMenu and contextMenu.Parent then contextMenu:Destroy() end end;
+			table.insert(janitor, UserInputService.InputBegan:Connect(function(input) if not (contextMenu and contextMenu:IsAncestorOf(input.UserInputType)) and input.UserInputType ~= Enum.UserInputType.MouseButton2 then closeContextMenu() end end));
+			local function createTree(parentInstance, parentUi, indentLevel) for _, child in ipairs(parentInstance:GetChildren()) do local itemFrame = Instance.new("Frame");itemFrame.Name = child.Name;itemFrame.Size = UDim2.new(1, 0, 0, 22);itemFrame.BackgroundTransparency = 1;itemFrame.Parent = parentUi;local hasChildren = #child:GetChildren() > 0;local toggleButton = Instance.new("TextButton");toggleButton.Size = UDim2.new(0, 20, 0, 20);toggleButton.Position = UDim2.fromOffset(indentLevel * 12, 1);toggleButton.BackgroundColor3 = Color3.fromRGB(80, 80, 100);toggleButton.Font = Enum.Font.Code;toggleButton.TextSize = 14;toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255);toggleButton.Text = hasChildren and "[+]" or "[-]";toggleButton.Parent = itemFrame;local nameButton = Instance.new("TextButton");nameButton.Size = UDim2.new(1, -((indentLevel * 12) + 22), 0, 20);nameButton.Position = UDim2.fromOffset((indentLevel * 12) + 22, 1);nameButton.BackgroundColor3 = Color3.fromRGB(60, 60, 70);nameButton.Font = Enum.Font.Code;nameButton.TextSize = 14;nameButton.TextColor3 = Color3.fromRGB(220, 220, 220);nameButton.Text = " " .. child.Name .. " [" .. child.ClassName .. "]";nameButton.TextXAlignment = Enum.TextXAlignment.Left;nameButton.Parent = itemFrame;local childContainer = Instance.new("Frame", itemFrame);childContainer.Name = "ChildContainer";childContainer.Size = UDim2.new(1, 0, 0, 0);childContainer.Position = UDim2.new(0, 0, 1, 0);childContainer.BackgroundTransparency = 1;childContainer.ClipsDescendants = true;local childLayout = Instance.new("UIListLayout", childContainer);childLayout.SortOrder = Enum.SortOrder.LayoutOrder;table.insert(janitor, itemFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() childContainer.Size = UDim2.new(1, 0, 0, childLayout.AbsoluteContentSize.Y);itemFrame.Size = UDim2.new(1, 0, 0, 22 + childContainer.AbsoluteSize.Y) end));table.insert(janitor, childLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() childContainer.Size = UDim2.new(1, 0, 0, childLayout.AbsoluteContentSize.Y);itemFrame.Size = UDim2.new(1, 0, 0, 22 + childContainer.AbsoluteSize.Y) end));table.insert(janitor, toggleButton.MouseButton1Click:Connect(function() local isExpanded = childContainer:FindFirstChildOfClass("Frame") ~= nil;if not hasChildren then return end;if isExpanded then for _, v in ipairs(childContainer:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end;toggleButton.Text = "[+]" else createTree(child, childContainer, indentLevel + 1);toggleButton.Text = "[-]" end end));table.insert(janitor, nameButton.MouseButton2Click:Connect(function() closeContextMenu();if child:IsA("Folder") or child:IsA("Model") or child:IsA("Workspace") then contextMenu = Instance.new("Frame");contextMenu.Size = UDim2.new(0, 150, 0, 30);contextMenu.Position = UDim2.fromOffset(UserInputService:GetMouseLocation().X, UserInputService:GetMouseLocation().Y);contextMenu.BackgroundColor3 = Color3.fromRGB(25, 25, 35);contextMenu.BorderSizePixel = 1;contextMenu.BorderColor3 = Color3.fromRGB(80, 80, 80);contextMenu.Parent = MainScreenGui;local setScopeBtn = Instance.new("TextButton", contextMenu);setScopeBtn.Size = UDim2.new(1, 0, 1, 0);setScopeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60);setScopeBtn.TextColor3 = Color3.fromRGB(200, 220, 255);setScopeBtn.Font = Enum.Font.Code;setScopeBtn.Text = "Set as Target Scope";table.insert(janitor, setScopeBtn.MouseButton1Click:Connect(function() getgenv().TargetScope = child;statusLabel.Text = "Scope set to: " .. child.Name;indexerUpdateSignal:Fire();closeContextMenu() end)) end end)) end end;
 			createTree(game, treeScrollView, 0);
 			explorerWindow = explorerFrame;
 			return explorerFrame
 		end
 
-
-		local MainWindow = Instance.new("Frame");
+		MainWindow = Instance.new("Frame");
 		MainWindow.Name = "MainWindow";
 		MainWindow.Size = UDim2.new(0, 520, 0, 420);
 		MainWindow.Position = UDim2.new(0.5, -260, 0.5, -210);
@@ -481,24 +400,26 @@ local function loadAimbotGUI()
 
 		local isDragging = false;
 		local dragStart, startPosition;
-		MainWindow.InputBegan:Connect(function(input)
+		table.insert(janitor, MainWindow.InputBegan:Connect(function(input)
 			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 				isDragging = true;
 				dragStart = input.Position;
 				startPosition = MainWindow.Position;
-				input.Changed:Connect(function()
+				local changedConn;
+				changedConn = input.Changed:Connect(function()
 					if input.UserInputState == Enum.UserInputState.End then
 						isDragging = false
+						if changedConn then changedConn:Disconnect() end
 					end
 				end)
 			end
-		end);
-		UserInputService.InputChanged:Connect(function(input)
+		end));
+		table.insert(janitor, UserInputService.InputChanged:Connect(function(input)
 			if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and isDragging then
 				local delta = input.Position - dragStart;
 				MainWindow.Position = UDim2.new(startPosition.X.Scale, startPosition.X.Offset + delta.X, startPosition.Y.Scale, startPosition.Y.Offset + delta.Y)
 			end
-		end);
+		end));
 
 		local TopBar = Instance.new("Frame");
 		TopBar.Name = "TopBar";
@@ -531,7 +452,7 @@ local function loadAimbotGUI()
 		CloseButton.TextSize = 14;
 		CloseButton.Parent = TopBar;
 		makeUICorner(CloseButton, 6);
-		CloseButton.MouseButton1Click:Connect(function() MainScreenGui:Destroy() end);
+		table.insert(janitor, CloseButton.MouseButton1Click:Connect(function() MainScreenGui:Destroy() end));
 
 		local MinimizeButton = Instance.new("TextButton");
 		MinimizeButton.Name = "MinimizeButton";
@@ -565,17 +486,19 @@ local function loadAimbotGUI()
 		ContentContainer.Parent = MainWindow;
 
 		local isMinimized = false;
-		MinimizeButton.MouseButton1Click:Connect(function()
+		table.insert(janitor, MinimizeButton.MouseButton1Click:Connect(function()
 			isMinimized = not isMinimized;
 			ContentContainer.Visible = not isMinimized;
 			if isMinimized then
-				MainWindow.Size = UDim2.new(0, 200, 0, 30);
+				local tween = TweenService:Create(MainWindow, TweenInfo.new(0.2), {Size = UDim2.new(0, 200, 0, 30)})
+				tween:Play()
 				MinimizeButton.Text = "+"
 			else
-				MainWindow.Size = UDim2.new(0, 520, 0, 420);
+				local tween = TweenService:Create(MainWindow, TweenInfo.new(0.2), {Size = UDim2.new(0, 520, 0, 420)})
+				tween:Play()
 				MinimizeButton.Text = "-"
 			end
-		end);
+		end));
 
 		do
 			local statusLabel, selectLabel;
@@ -619,184 +542,126 @@ local function loadAimbotGUI()
 			StatusPadding.PaddingLeft = UDim.new(0, 8)
 			StatusPadding.PaddingRight = UDim.new(0, 8)
 
-			local function createSectionHeader(parent, text)
-				local header = Instance.new("TextLabel", parent)
-				header.Size = UDim2.new(1, 0, 0, 24)
-				header.BackgroundTransparency = 1
-				header.Font = Enum.Font.Code
-				header.Text = text
-				header.TextColor3 = Color3.fromRGB(200, 220, 255)
-				header.TextSize = 16
-				header.TextXAlignment = Enum.TextXAlignment.Left
-				return header
-			end
-
-			local function createSettingRow(parent, labelText)
-				local row = Instance.new("Frame", parent)
-				row.Size = UDim2.new(1, 0, 0, 24)
-				row.BackgroundTransparency = 1
-				
-				local label = Instance.new("TextLabel", row)
-				label.Size = UDim2.new(0.4, 0, 1, 0)
-				label.BackgroundTransparency = 1
-				label.Font = Enum.Font.Code
-				label.Text = labelText..":"
-				label.TextColor3 = Color3.fromRGB(180, 220, 255)
-				label.TextSize = 15
-				label.TextXAlignment = Enum.TextXAlignment.Left
-				
-				return row
-			end
+			local function createSectionHeader(parent, text) local header = Instance.new("TextLabel", parent) header.Size = UDim2.new(1, 0, 0, 24) header.BackgroundTransparency = 1 header.Font = Enum.Font.Code header.Text = text header.TextColor3 = Color3.fromRGB(200, 220, 255) header.TextSize = 16 header.TextXAlignment = Enum.TextXAlignment.Left return header end
+			local function createSettingRow(parent, labelText) local row = Instance.new("Frame", parent) row.Size = UDim2.new(1, 0, 0, 24) row.BackgroundTransparency = 1 local label = Instance.new("TextLabel", row) label.Size = UDim2.new(0.4, 0, 1, 0) label.BackgroundTransparency = 1 label.Font = Enum.Font.Code label.Text = labelText..":" label.TextColor3 = Color3.fromRGB(180, 220, 255) label.TextSize = 15 label.TextXAlignment = Enum.TextXAlignment.Left return row end
 
 			createSectionHeader(LeftColumn, "General Settings")
-			
 			local toggleKeyRow = createSettingRow(LeftColumn, "Toggle Key")
 			local toggleKeyBox = Instance.new("TextBox", toggleKeyRow)
 			toggleKeyBox.Size, toggleKeyBox.Position = UDim2.new(0.6, 0, 1, 0), UDim2.new(0.4, 0, 0, 0)
 			toggleKeyBox.BackgroundColor3, toggleKeyBox.TextColor3 = Color3.fromRGB(40,40,40), Color3.fromRGB(255,255,255)
 			toggleKeyBox.Font, toggleKeyBox.TextSize, toggleKeyBox.Text = Enum.Font.Code, 15, "MouseButton2"
 			makeUICorner(toggleKeyBox, 6)
-			
 			local aimPartRow = createSettingRow(LeftColumn, "Aim Part")
 			local partDropdown = Instance.new("TextButton", aimPartRow)
 			partDropdown.Size, partDropdown.Position = UDim2.new(0.6, 0, 1, 0), UDim2.new(0.4, 0, 0, 0)
 			partDropdown.BackgroundColor3, partDropdown.TextColor3 = Color3.fromRGB(40,40,40), Color3.fromRGB(255,255,255)
 			partDropdown.Font, partDropdown.TextSize, partDropdown.Text = Enum.Font.Code, 15, "Head"
 			makeUICorner(partDropdown, 6)
-			
 			createSectionHeader(LeftColumn, "Field of View")
-			
 			local fovRow = createSettingRow(LeftColumn, "FOV Radius")
 			local fovValueLabel = Instance.new("TextLabel", fovRow)
 			fovValueLabel.Size, fovValueLabel.Position = UDim2.new(0.6, 0, 1, 0), UDim2.new(0.4, 0, 0, 0)
 			fovValueLabel.BackgroundTransparency, fovValueLabel.TextColor3 = 1, Color3.fromRGB(255,255,255)
 			fovValueLabel.Font, fovValueLabel.TextSize = Enum.Font.Code, 15
 			fovValueLabel.TextXAlignment, fovValueLabel.TextYAlignment = Enum.TextXAlignment.Left, Enum.TextYAlignment.Center
-
 			local sliderTrack = Instance.new("Frame", LeftColumn)
 			sliderTrack.Size, sliderTrack.BackgroundColor3 = UDim2.new(1, 0, 0, 4), Color3.fromRGB(20,20,30)
 			sliderTrack.BorderSizePixel = 0
 			makeUICorner(sliderTrack, 2)
-			
 			local sliderHandle = Instance.new("TextButton", sliderTrack)
 			sliderHandle.Size, sliderHandle.Position = UDim2.new(0, 12, 0, 12), UDim2.new(0, 0, 0.5, -6)
 			sliderHandle.BackgroundColor3, sliderHandle.BorderSizePixel = Color3.fromRGB(180, 220, 255), 0
 			sliderHandle.Text = ""
 			makeUICorner(sliderHandle, 6)
-
 			createSectionHeader(LeftColumn, "Smoothing")
-
 			local smoothingToggle = Instance.new("TextButton", LeftColumn)
 			smoothingToggle.Size, smoothingToggle.Text = UDim2.new(1, 0, 0, 28), "Smoothing: OFF"
 			smoothingToggle.BackgroundColor3, smoothingToggle.TextColor3 = Color3.fromRGB(40,40,40), Color3.fromRGB(255,255,255)
 			smoothingToggle.Font, smoothingToggle.TextSize = Enum.Font.Code, 15
 			makeUICorner(smoothingToggle, 6)
-
 			local smoothingRow = createSettingRow(LeftColumn, "Smoothness")
 			local smoothingValueLabel = Instance.new("TextLabel", smoothingRow)
 			smoothingValueLabel.Size, smoothingValueLabel.Position = UDim2.new(0.6, 0, 1, 0), UDim2.new(0.4, 0, 0, 0)
 			smoothingValueLabel.BackgroundTransparency, smoothingValueLabel.TextColor3 = 1, Color3.fromRGB(255,255,255)
 			smoothingValueLabel.Font, smoothingValueLabel.TextSize = Enum.Font.Code, 15
 			smoothingValueLabel.TextXAlignment, smoothingValueLabel.TextYAlignment = Enum.TextXAlignment.Left, Enum.TextYAlignment.Center
-
 			local smoothingSliderTrack = Instance.new("Frame", LeftColumn)
 			smoothingSliderTrack.Size, smoothingSliderTrack.BackgroundColor3 = UDim2.new(1, 0, 0, 4), Color3.fromRGB(20,20,30)
 			smoothingSliderTrack.BorderSizePixel = 0
 			makeUICorner(smoothingSliderTrack, 2)
-
 			local smoothingSliderHandle = Instance.new("TextButton", smoothingSliderTrack)
 			smoothingSliderHandle.Size, smoothingSliderHandle.Position = UDim2.new(0, 12, 0, 12), UDim2.new(0, 0, 0.5, -6)
 			smoothingSliderHandle.BackgroundColor3, smoothingSliderHandle.BorderSizePixel = Color3.fromRGB(180, 220, 255), 0
 			smoothingSliderHandle.Text = ""
 			makeUICorner(smoothingSliderHandle, 6)
-			
 			createSectionHeader(RightColumn, "Targeting")
-			
 			local playerRow = createSettingRow(RightColumn, "Target Player")
 			local playerDropdown = Instance.new("TextButton", playerRow)
 			playerDropdown.Size, playerDropdown.Position = UDim2.new(0.6, 0, 1, 0), UDim2.new(0.4, 0, 0, 0)
 			playerDropdown.BackgroundColor3, playerDropdown.TextColor3 = Color3.fromRGB(40,40,40), Color3.fromRGB(255,255,255)
 			playerDropdown.Font, playerDropdown.TextSize, playerDropdown.Text = Enum.Font.Code, 15, "None"
 			makeUICorner(playerDropdown, 6)
-			
 			local targetPlayerToggle = Instance.new("TextButton", RightColumn)
 			targetPlayerToggle.Size = UDim2.new(1, 0, 0, 28)
 			targetPlayerToggle.BackgroundColor3, targetPlayerToggle.TextColor3 = Color3.fromRGB(40,40,40), Color3.fromRGB(255,255,255)
 			targetPlayerToggle.Font, targetPlayerToggle.TextSize, targetPlayerToggle.Text = Enum.Font.Code, 15, "Target Selected: OFF"
 			makeUICorner(targetPlayerToggle, 6)
-
 			createSectionHeader(RightColumn, "Modifiers")
-			
 			local silentAimToggle = Instance.new("TextButton", RightColumn)
 			silentAimToggle.Size, silentAimToggle.Text = UDim2.new(1, 0, 0, 28), "Silent Aim: OFF"
 			silentAimToggle.BackgroundColor3, silentAimToggle.TextColor3 = Color3.fromRGB(40,40,40), Color3.fromRGB(255,255,255)
 			silentAimToggle.Font, silentAimToggle.TextSize = Enum.Font.Code, 15
 			makeUICorner(silentAimToggle, 6)
-			
 			local ignoreTeamToggle = Instance.new("TextButton", RightColumn)
 			ignoreTeamToggle.Size, ignoreTeamToggle.Text = UDim2.new(1, 0, 0, 28), "Ignore Team: OFF"
 			ignoreTeamToggle.BackgroundColor3, ignoreTeamToggle.TextColor3 = Color3.fromRGB(40,40,40), Color3.fromRGB(255,255,255)
 			ignoreTeamToggle.Font, ignoreTeamToggle.TextSize = Enum.Font.Code, 15
 			makeUICorner(ignoreTeamToggle, 6)
-			
 			local wallCheckToggle = Instance.new("TextButton", RightColumn)
 			wallCheckToggle.Size, wallCheckToggle.Text = UDim2.new(1, 0, 0, 28), "Wall Check: ON"
 			wallCheckToggle.BackgroundColor3, wallCheckToggle.TextColor3 = Color3.fromRGB(40,40,40), Color3.fromRGB(255,255,255)
 			wallCheckToggle.Font, wallCheckToggle.TextSize = Enum.Font.Code, 15
 			makeUICorner(wallCheckToggle, 6)
-			
 			statusLabel = Instance.new("TextLabel", StatusBar)
 			statusLabel.Size, statusLabel.BackgroundTransparency = UDim2.new(1, 0, 0, 18), 1
 			statusLabel.TextColor3, statusLabel.Font, statusLabel.TextSize = Color3.fromRGB(180,220,180), Enum.Font.Code, 14
 			statusLabel.Text = "Aimbot ready. Hold toggle key to aim."
 			statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-
 			selectLabel = Instance.new("TextLabel", StatusBar)
 			selectLabel.Size, selectLabel.BackgroundTransparency = UDim2.new(1, 0, 0, 18), 1
 			selectLabel.TextColor3, selectLabel.Font, selectLabel.TextSize = Color3.fromRGB(220,220,180), Enum.Font.Code, 14
 			selectLabel.Text = "Press V to delete any block/model under mouse."
 			selectLabel.TextXAlignment = Enum.TextXAlignment.Left
 			
-			-- ############################
-			-- ### AIMBOT LOGIC STARTS HERE ###
-			-- ############################
-			
 			local parts = {"Head", "HumanoidRootPart", "Torso", "UpperTorso", "LowerTorso"};
-			local dropdownOpen, dropdownFrame = false, nil;
-			partDropdown.MouseButton1Click:Connect(function()
-				if dropdownOpen then
-					if dropdownFrame then dropdownFrame:Destroy() end
-					dropdownOpen = false;
-					return
-				end;
-				dropdownOpen = true;
-				dropdownFrame = Instance.new("Frame", AimbotPage);
-				local absolutePos = partDropdown.AbsolutePosition
-				local guiPos = MainWindow.AbsolutePosition
-				dropdownFrame.Size = UDim2.new(0, partDropdown.AbsoluteSize.X, 0, #parts * 22)
-				dropdownFrame.Position = UDim2.new(0, absolutePos.X - guiPos.X, 0, absolutePos.Y - guiPos.Y + 22)
-				dropdownFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-				dropdownFrame.BackgroundTransparency = 0.2
-				dropdownFrame.BorderSizePixel = 0;
-				dropdownFrame.ZIndex = 5
-				makeUICorner(dropdownFrame, 6);
-                local stroke = Instance.new("UIStroke", dropdownFrame)
-                stroke.Color = Color3.fromRGB(80, 80, 90)
-                stroke.Thickness = 1
-
-				for i, part in ipairs(parts) do
-					local btn = Instance.new("TextButton", dropdownFrame);
-					btn.Size, btn.Position = UDim2.new(1, 0, 0, 22), UDim2.new(0, 0, 0, (i-1)*22);
-					btn.BackgroundColor3, btn.TextColor3 = Color3.fromRGB(40,40,40), Color3.fromRGB(255,255,255);
-					btn.Font, btn.TextSize, btn.Text = Enum.Font.Code, 15, part;
-					makeUICorner(btn, 6);
-					btn.MouseButton1Click:Connect(function()
-						partDropdown.Text = part;
-						if dropdownFrame then dropdownFrame:Destroy() end;
-						dropdownOpen = false
-					end)
+			local partDropdownOpen, partDropdownFrame = false, nil;
+			local playerDropdownOpen, playerDropdownFrame = false, nil;
+			
+			table.insert(janitor, UserInputService.InputBegan:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 then
+					if partDropdownOpen and not (input.SourceUserInputProcessor and (input.SourceUserInputProcessor:IsDescendantOf(partDropdownFrame) or input.SourceUserInputProcessor == partDropdown)) then
+						if partDropdownFrame then partDropdownFrame:Destroy() end
+						partDropdownOpen = false;
+					end
+					if playerDropdownOpen and not (input.SourceUserInputProcessor and (input.SourceUserInputProcessor:IsDescendantOf(playerDropdownFrame) or input.SourceUserInputProcessor == playerDropdown)) then
+						if playerDropdownFrame then playerDropdownFrame:Destroy() end;
+						playerDropdownOpen = false;
+					end
 				end
-			end);
+			end))
+
+			table.insert(janitor, partDropdown.MouseButton1Click:Connect(function()
+				if partDropdownOpen then if partDropdownFrame then partDropdownFrame:Destroy() end; partDropdownOpen = false; return end;
+				partDropdownOpen = true;
+				partDropdownFrame = Instance.new("Frame", AimbotPage);
+				local absolutePos = partDropdown.AbsolutePosition; local guiPos = MainWindow.AbsolutePosition;
+				partDropdownFrame.Size = UDim2.new(0, partDropdown.AbsoluteSize.X, 0, #parts * 22)
+				partDropdownFrame.Position = UDim2.new(0, absolutePos.X - guiPos.X, 0, absolutePos.Y - guiPos.Y + 22)
+				partDropdownFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40); partDropdownFrame.BackgroundTransparency = 0.2; partDropdownFrame.BorderSizePixel = 0; partDropdownFrame.ZIndex = 5;
+				makeUICorner(partDropdownFrame, 6); local stroke = Instance.new("UIStroke", partDropdownFrame); stroke.Color = Color3.fromRGB(80, 80, 90); stroke.Thickness = 1;
+				for i, part in ipairs(parts) do local btn = Instance.new("TextButton", partDropdownFrame); btn.Size, btn.Position = UDim2.new(1, 0, 0, 22), UDim2.new(0, 0, 0, (i-1)*22); btn.BackgroundColor3, btn.TextColor3 = Color3.fromRGB(40,40,40), Color3.fromRGB(255,255,255); btn.Font, btn.TextSize, btn.Text = Enum.Font.Code, 15, part; makeUICorner(btn, 6); table.insert(janitor, btn.MouseButton1Click:Connect(function() partDropdown.Text = part; if partDropdownFrame then partDropdownFrame:Destroy() end; partDropdownOpen = false end)) end
+			end));
 			
 			local fovRadius = 150;
 			local smoothingEnabled = false;
@@ -811,158 +676,30 @@ local function loadAimbotGUI()
 			local activeESPs = {};
 
 			local FovCircle = nil
-			if Drawing and typeof(Drawing.new) == "function" then
-				FovCircle = Drawing.new("Circle")
-				FovCircle.Visible = false;
-				FovCircle.Thickness = 1;
-				FovCircle.NumSides = 64;
-				FovCircle.Color = Color3.fromRGB(255, 255, 255);
-				FovCircle.Transparency = 0.5;
-				FovCircle.Filled = false;
-			else
-				warn("Zuka's Log: 'Drawing' library not found. FOV circle visualization will be disabled.")
-			end
-
+			if Drawing and typeof(Drawing.new) == "function" then FovCircle = Drawing.new("Circle"); FovCircle.Visible = false; FovCircle.Thickness = 1; FovCircle.NumSides = 64; FovCircle.Color = Color3.fromRGB(255, 255, 255); FovCircle.Transparency = 0.5; FovCircle.Filled = false; else warn("Zuka's Log: 'Drawing' library not found. FOV circle visualization will be disabled.") end
 			local minFov, maxFov = 50, 500;
-			local function updateFovFromHandlePosition()
-				local trackWidth = sliderTrack.AbsoluteSize.X;
-				local handleX = sliderHandle.Position.X.Offset;
-				local ratio = math.clamp(handleX / (trackWidth - sliderHandle.AbsoluteSize.X), 0, 1);
-				fovRadius = minFov + (maxFov - minFov) * ratio;
-				fovValueLabel.Text = tostring(math.floor(fovRadius)) .. "px";
-				if FovCircle then
-					FovCircle.Radius = fovRadius
-				end
-			end;
-			local function updateHandleFromFovValue()
-				local trackWidth = sliderTrack.AbsoluteSize.X;
-				local ratio = (fovRadius - minFov) / (maxFov - minFov);
-				local handleX = ratio * (trackWidth - sliderHandle.AbsoluteSize.X);
-				sliderHandle.Position = UDim2.new(0, handleX, 0.5, -6)
-			end;
-			
+			local function updateFovFromHandlePosition() local trackWidth = sliderTrack.AbsoluteSize.X; local handleX = sliderHandle.Position.X.Offset; local ratio = math.clamp(handleX / (trackWidth - sliderHandle.AbsoluteSize.X), 0, 1); fovRadius = minFov + (maxFov - minFov) * ratio; fovValueLabel.Text = tostring(math.floor(fovRadius)) .. "px"; if FovCircle then FovCircle.Radius = fovRadius end end;
+			local function updateHandleFromFovValue() local trackWidth = sliderTrack.AbsoluteSize.X; if trackWidth == 0 then return end; local ratio = (fovRadius - minFov) / (maxFov - minFov); local handleX = ratio * (trackWidth - sliderHandle.AbsoluteSize.X); sliderHandle.Position = UDim2.new(0, handleX, 0.5, -6) end;
 			local isDraggingSlider = false;
-			sliderHandle.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDraggingSlider = true end end);
-			UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDraggingSlider = false end end);
-			UserInputService.InputChanged:Connect(function(input)
-				if isDraggingSlider and input.UserInputType == Enum.UserInputType.MouseMovement then
-					local mouseX = UserInputService:GetMouseLocation().X;
-					local trackStartX = sliderTrack.AbsolutePosition.X;
-					local handleWidth = sliderHandle.AbsoluteSize.X;
-					local trackWidth = sliderTrack.AbsoluteSize.X;
-					local newHandleX = mouseX - trackStartX - (handleWidth / 2);
-					local clampedX = math.clamp(newHandleX, 0, trackWidth - handleWidth);
-					sliderHandle.Position = UDim2.new(0, clampedX, 0.5, -6);
-					updateFovFromHandlePosition()
-				end
-			end)
-			
-			smoothingToggle.MouseButton1Click:Connect(function()
-				smoothingEnabled = not smoothingEnabled
-				smoothingToggle.Text = "Smoothing: " .. (smoothingEnabled and "ON" or "OFF")
-			end)
+			table.insert(janitor, sliderHandle.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDraggingSlider = true end end));
+			table.insert(janitor, UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDraggingSlider = false end end));
+			table.insert(janitor, UserInputService.InputChanged:Connect(function(input) if isDraggingSlider and input.UserInputType == Enum.UserInputType.MouseMovement then local mouseX = UserInputService:GetMouseLocation().X; local trackStartX = sliderTrack.AbsolutePosition.X; local handleWidth = sliderHandle.AbsoluteSize.X; local trackWidth = sliderTrack.AbsoluteSize.X; local newHandleX = mouseX - trackStartX - (handleWidth / 2); local clampedX = math.clamp(newHandleX, 0, trackWidth - handleWidth); sliderHandle.Position = UDim2.new(0, clampedX, 0.5, -6); updateFovFromHandlePosition() end end));
+			table.insert(janitor, smoothingToggle.MouseButton1Click:Connect(function() smoothingEnabled = not smoothingEnabled; smoothingToggle.Text = "Smoothing: " .. (smoothingEnabled and "ON" or "OFF") end));
 			local minSmooth, maxSmooth = 0.05, 1.0;
-			local function updateSmoothFromHandlePosition()
-				local trackWidth = smoothingSliderTrack.AbsoluteSize.X;
-				local handleX = smoothingSliderHandle.Position.X.Offset;
-				local ratio = math.clamp(handleX / (trackWidth - smoothingSliderHandle.AbsoluteSize.X), 0, 1);
-				smoothingFactor = minSmooth + (maxSmooth - minSmooth) * ratio;
-				smoothingValueLabel.Text = string.format("%.2f", smoothingFactor)
-			end;
-			local function updateHandleFromSmoothValue()
-				local trackWidth = smoothingSliderTrack.AbsoluteSize.X;
-				local ratio = (smoothingFactor - minSmooth) / (maxSmooth - minSmooth);
-				local handleX = ratio * (trackWidth - smoothingSliderHandle.AbsoluteSize.X);
-				smoothingSliderHandle.Position = UDim2.new(0, handleX, 0.5, -6)
-			end;
-
+			local function updateSmoothFromHandlePosition() local trackWidth = smoothingSliderTrack.AbsoluteSize.X; local handleX = smoothingSliderHandle.Position.X.Offset; local ratio = math.clamp(handleX / (trackWidth - smoothingSliderHandle.AbsoluteSize.X), 0, 1); smoothingFactor = minSmooth + (maxSmooth - minSmooth) * ratio; smoothingValueLabel.Text = string.format("%.2f", smoothingFactor) end;
+			local function updateHandleFromSmoothValue() local trackWidth = smoothingSliderTrack.AbsoluteSize.X; if trackWidth == 0 then return end; local ratio = (smoothingFactor - minSmooth) / (maxSmooth - minSmooth); local handleX = ratio * (trackWidth - smoothingSliderHandle.AbsoluteSize.X); smoothingSliderHandle.Position = UDim2.new(0, handleX, 0.5, -6) end;
 			local isDraggingSmoothSlider = false;
-			smoothingSliderHandle.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDraggingSmoothSlider = true end end);
-			UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDraggingSmoothSlider = false end end);
-			UserInputService.InputChanged:Connect(function(input)
-				if isDraggingSmoothSlider and input.UserInputType == Enum.UserInputType.MouseMovement then
-					local mouseX = UserInputService:GetMouseLocation().X;
-					local trackStartX = smoothingSliderTrack.AbsolutePosition.X;
-					local handleWidth = smoothingSliderHandle.AbsoluteSize.X;
-					local trackWidth = smoothingSliderTrack.AbsoluteSize.X;
-					local newHandleX = mouseX - trackStartX - (handleWidth / 2);
-					local clampedX = math.clamp(newHandleX, 0, trackWidth - handleWidth);
-					smoothingSliderHandle.Position = UDim2.new(0, clampedX, 0.5, -6);
-					updateSmoothFromHandlePosition()
-				end
-			end)
-
+			table.insert(janitor, smoothingSliderHandle.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDraggingSmoothSlider = true end end));
+			table.insert(janitor, UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDraggingSmoothSlider = false end end));
+			table.insert(janitor, UserInputService.InputChanged:Connect(function(input) if isDraggingSmoothSlider and input.UserInputType == Enum.UserInputType.MouseMovement then local mouseX = UserInputService:GetMouseLocation().X; local trackStartX = smoothingSliderTrack.AbsolutePosition.X; local handleWidth = smoothingSliderHandle.AbsoluteSize.X; local trackWidth = smoothingSliderTrack.AbsoluteSize.X; local newHandleX = mouseX - trackStartX - (handleWidth / 2); local clampedX = math.clamp(newHandleX, 0, trackWidth - handleWidth); smoothingSliderHandle.Position = UDim2.new(0, clampedX, 0.5, -6); updateSmoothFromHandlePosition() end end));
 			task.wait();
-			updateHandleFromFovValue()
-			updateFovFromHandlePosition()
-			updateHandleFromSmoothValue()
-			updateSmoothFromHandlePosition()
+			updateHandleFromFovValue(); updateFovFromHandlePosition(); updateHandleFromSmoothValue(); updateSmoothFromHandlePosition();
+			local function isTeammate(player) if not ignoreTeamEnabled or not player then return false end; if LocalPlayer.Team and player.Team and LocalPlayer.Team == player.Team then return true end; if LocalPlayer.TeamColor and player.TeamColor and LocalPlayer.TeamColor == player.TeamColor then return true end; return false end;
+			local function isPartVisible(targetPart) if not LocalPlayer.Character or not targetPart or not targetPart.Parent then return false end; local targetCharacter = targetPart:FindFirstAncestorOfClass("Model") or targetPart.Parent; local origin = Camera.CFrame.Position; wallCheckParams.FilterDescendantsInstances = {LocalPlayer.Character, targetCharacter}; local result = Workspace:Raycast(origin, targetPart.Position - origin, wallCheckParams); return not result end;
+			local function manageESP(part, color, name) if not part or not part.Parent then return end; if activeESPs[part] then activeESPs[part].Color3, activeESPs[part].Name, activeESPs[part].Adornee, activeESPs[part].Size = color, name, part, part.Size else local espBox = Instance.new("BoxHandleAdornment"); espBox.Name, espBox.Adornee, espBox.AlwaysOnTop = name, part, true; espBox.ZIndex, espBox.Size, espBox.Color3 = 10, part.Size, color; espBox.Transparency, espBox.Parent = 0.4, part; activeESPs[part] = espBox end end;
+			local function clearESP(part) if part then if activeESPs[part] then activeESPs[part]:Destroy(); activeESPs[part] = nil end else for _, espBox in pairs(activeESPs) do pcall(function() espBox:Destroy() end) end; activeESPs = {} end end;
+			local function getClosestTargetInScope() local mousePos = UserInputService:GetMouseLocation(); local minDist, closestTargetModel = math.huge, nil; local aimPartName = partDropdown.Text; for _, model in ipairs(getgenv().TargetIndex) do if model and model.Parent then local player = Players:GetPlayerFromCharacter(model); if not (player and player == LocalPlayer) and not (player and isTeammate(player)) then local targetPart = model:FindFirstChild(aimPartName); if targetPart and (not wallCheckEnabled or isPartVisible(targetPart)) then local pos, onScreen = Camera:WorldToViewportPoint(targetPart.Position); if onScreen then local dist = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude; if dist < minDist and dist <= fovRadius then minDist, closestTargetModel = dist, model end end end end end end; return closestTargetModel end;
 			
-			local function isTeammate(player)
-				if not ignoreTeamEnabled or not player then return false end;
-				if LocalPlayer.Team and player.Team and LocalPlayer.Team == player.Team then return true end;
-				if LocalPlayer.TeamColor and player.TeamColor and LocalPlayer.TeamColor == player.TeamColor then return true end;
-				return false
-			end
-			local function isPartVisible(targetPart)
-				if not LocalPlayer.Character or not targetPart or not targetPart.Parent then return false end;
-				local targetCharacter = targetPart:FindFirstAncestorOfClass("Model") or targetPart.Parent;
-				local origin = Camera.CFrame.Position;
-				wallCheckParams.FilterDescendantsInstances = {LocalPlayer.Character, targetCharacter};
-				local result = Workspace:Raycast(origin, targetPart.Position - origin, wallCheckParams);
-				return not result
-			end
-			local function manageESP(part, color, name)
-				if not part or not part.Parent then return end;
-				if activeESPs[part] then
-					activeESPs[part].Color3, activeESPs[part].Name, activeESPs[part].Adornee, activeESPs[part].Size = color, name, part, part.Size
-				else
-					local espBox = Instance.new("BoxHandleAdornment");
-					espBox.Name, espBox.Adornee, espBox.AlwaysOnTop = name, part, true;
-					espBox.ZIndex, espBox.Size, espBox.Color3 = 10, part.Size, color;
-					espBox.Transparency, espBox.Parent = 0.4, part;
-					activeESPs[part] = espBox
-				end
-			end
-			local function clearESP(part)
-				if part then
-					if activeESPs[part] then
-						activeESPs[part]:Destroy();
-						activeESPs[part] = nil
-					end
-				else
-					for _, espBox in pairs(activeESPs) do espBox:Destroy() end;
-					activeESPs = {}
-				end
-			end
-			
-			local function getClosestTargetInScope()
-				local mousePos = UserInputService:GetMouseLocation();
-				local minDist, closestTargetModel = math.huge, nil;
-				local aimPartName = partDropdown.Text
-				
-				for _, model in ipairs(getgenv().TargetIndex) do
-					if model and model.Parent then
-						local player = Players:GetPlayerFromCharacter(model)
-						if player and player == LocalPlayer then continue end
-						if not (player and isTeammate(player)) then
-							local targetPart = model:FindFirstChild(aimPartName)
-							if targetPart and (not wallCheckEnabled or isPartVisible(targetPart)) then
-								local pos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
-								if onScreen then
-									local dist = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude;
-									if dist < minDist and dist <= fovRadius then
-										minDist, closestTargetModel = dist, model
-									end
-								end
-							end
-						end
-					end
-				end
-				return closestTargetModel
-			end
-			
-			local playerDropdownOpen, playerDropdownFrame = false, nil;
 			local function buildPlayerDropdownFrame()
 				if playerDropdownFrame then playerDropdownFrame:Destroy() end;
 				local playersList = Players:GetPlayers();
@@ -979,218 +716,138 @@ local function loadAimbotGUI()
                 local stroke = Instance.new("UIStroke", playerDropdownFrame)
                 stroke.Color = Color3.fromRGB(80, 80, 90)
                 stroke.Thickness = 1
-
 				for i, plr in ipairs(playersList) do
 					local btn = Instance.new("TextButton", playerDropdownFrame);
 					btn.Size, btn.Position = UDim2.new(1, 0, 0, 22), UDim2.new(0, 0, 0, (i-1)*22);
 					btn.BackgroundColor3, btn.TextColor3 = Color3.fromRGB(40,40,40), Color3.fromRGB(255,255,255);
 					btn.Font, btn.TextSize, btn.Text = Enum.Font.Code, 15, plr.Name;
 					makeUICorner(btn, 6);
-					btn.MouseButton1Click:Connect(function()
+					table.insert(janitor, btn.MouseButton1Click:Connect(function()
 						selectedPlayerTarget, playerDropdown.Text = plr, plr.Name;
 						if playerDropdownFrame then playerDropdownFrame:Destroy() end;
 						playerDropdownOpen = false;
 						if playerTargetEnabled then statusLabel.Text = "Aimbot: Will target " .. plr.Name end
-					end)
+					end))
 				end
 			end
 			
-			targetPlayerToggle.MouseButton1Click:Connect(function()
+			table.insert(janitor, targetPlayerToggle.MouseButton1Click:Connect(function()
 				playerTargetEnabled = not playerTargetEnabled;
 				targetPlayerToggle.Text = "Target Selected: " .. (playerTargetEnabled and "ON" or "OFF");
-				if not playerTargetEnabled then
-					statusLabel.Text = "Aimbot ready. Hold toggle key to aim."
-				elseif selectedPlayerTarget then
-					statusLabel.Text = "Aimbot: Will target " .. selectedPlayerTarget.Name
-				end
-			end)
+				if not playerTargetEnabled then statusLabel.Text = "Aimbot ready. Hold toggle key to aim." elseif selectedPlayerTarget then statusLabel.Text = "Aimbot: Will target " .. selectedPlayerTarget.Name end
+			end));
 			
-			playerDropdown.MouseButton1Click:Connect(function()
-				if playerDropdownOpen then
-					if playerDropdownFrame then playerDropdownFrame:Destroy() end;
-					playerDropdownOpen = false; return
-				end;
+			table.insert(janitor, playerDropdown.MouseButton1Click:Connect(function()
+				if playerDropdownOpen then if playerDropdownFrame then playerDropdownFrame:Destroy() end; playerDropdownOpen = false; return end;
 				playerDropdownOpen = true; buildPlayerDropdownFrame()
-			end)
-			Players.PlayerAdded:Connect(function() if playerDropdownOpen then buildPlayerDropdownFrame() end end);
-			Players.PlayerRemoving:Connect(function(plr)
-				if selectedPlayerTarget == plr then
-					selectedPlayerTarget, playerDropdown.Text = nil, "None";
-					if playerTargetEnabled then
-						playerTargetEnabled = false;
-						targetPlayerToggle.Text = "Target Selected: OFF"
-					end
-				end;
+			end));
+			table.insert(janitor, Players.PlayerAdded:Connect(function() if playerDropdownOpen then buildPlayerDropdownFrame() end end));
+			table.insert(janitor, Players.PlayerRemoving:Connect(function(plr)
+				if selectedPlayerTarget == plr then selectedPlayerTarget, playerDropdown.Text = nil, "None"; if playerTargetEnabled then playerTargetEnabled = false; targetPlayerToggle.Text = "Target Selected: OFF" end end;
 				if playerDropdownOpen then buildPlayerDropdownFrame() end
-			end)
+			end));
 			
-			UserInputService.InputBegan:Connect(function(input, processed)
-				if processed or toggleKeyBox:IsFocused() then return end;
-				if input.KeyCode == Enum.KeyCode.V then
-					local target = LocalPlayer:GetMouse().Target
-					if target and target.Parent then
-						local modelAncestor = target:FindFirstAncestorOfClass("Model")
-						if (modelAncestor and modelAncestor == LocalPlayer.Character) or target:IsDescendantOf(LocalPlayer.Character) then
-							statusLabel.Text = "Cannot delete your own character."; return
-						end
-						if modelAncestor and modelAncestor ~= Workspace then
-							local modelName = modelAncestor.Name; modelAncestor:Destroy(); statusLabel.Text = "Deleted model: " .. modelName
-						else
-							if target.Parent ~= Workspace then
-								 local targetName = target.Name; target:Destroy(); statusLabel.Text = "Deleted part: " .. targetName
-							else
-								 statusLabel.Text = "Cannot delete baseplate or map."
-							end
-						end
-					else
-						statusLabel.Text = "No target under mouse to delete."
-					end
-				end;
-				
-				local key = toggleKeyBox.Text:upper();
-				if (key == "MOUSEBUTTON2" and input.UserInputType == Enum.UserInputType.MouseButton2) or (input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode.Name:upper() == key) then
-					aiming = true
-					if FovCircle then FovCircle.Visible = true end
-				end
-			end)
-			
-			UserInputService.InputEnded:Connect(function(input)
-				local key = toggleKeyBox.Text:upper();
-				if (key == "MOUSEBUTTON2" and input.UserInputType == Enum.UserInputType.MouseButton2) or (input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode.Name:upper() == key) then
-					aiming = false
-					if FovCircle then FovCircle.Visible = false end
-					clearESP()
-				end
-			end)
+			table.insert(janitor, UserInputService.InputBegan:Connect(function(input, processed) if processed or toggleKeyBox:IsFocused() then return end; if input.KeyCode == Enum.KeyCode.V then local target = LocalPlayer:GetMouse().Target; if target and target.Parent then local modelAncestor = target:FindFirstAncestorOfClass("Model"); if (modelAncestor and modelAncestor == LocalPlayer.Character) or target:IsDescendantOf(LocalPlayer.Character) then statusLabel.Text = "Cannot delete your own character."; return end; if modelAncestor and modelAncestor ~= Workspace then local modelName = modelAncestor.Name; modelAncestor:Destroy(); statusLabel.Text = "Deleted model: " .. modelName else if target.Parent ~= Workspace then local targetName = target.Name; target:Destroy(); statusLabel.Text = "Deleted part: " .. targetName else statusLabel.Text = "Cannot delete baseplate or map." end end else statusLabel.Text = "No target under mouse to delete." end end; local key = toggleKeyBox.Text:upper(); if (key == "MOUSEBUTTON2" and input.UserInputType == Enum.UserInputType.MouseButton2) or (input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode.Name:upper() == key) then aiming = true; if FovCircle then FovCircle.Visible = true end end end));
+			table.insert(janitor, UserInputService.InputEnded:Connect(function(input) local key = toggleKeyBox.Text:upper(); if (key == "MOUSEBUTTON2" and input.UserInputType == Enum.UserInputType.MouseButton2) or (input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode.Name:upper() == key) then aiming = false; if FovCircle then FovCircle.Visible = false end; clearESP() end end));
 			
 			local currentTarget = nil
-			RunService.RenderStepped:Connect(function(deltaTime)
-				if FovCircle and FovCircle.Visible then
-					FovCircle.Position = UserInputService:GetMouseLocation()
-				end
-
+			table.insert(janitor, RunService.RenderStepped:Connect(function(deltaTime)
+				if FovCircle and FovCircle.Visible then FovCircle.Position = UserInputService:GetMouseLocation() end
 				local isCurrentTargetValid = currentTarget and currentTarget.Parent and currentTarget:FindFirstChildOfClass("Humanoid") and currentTarget:FindFirstChildOfClass("Humanoid").Health > 0
-				if aiming and not isCurrentTargetValid then
-					currentTarget = getClosestTargetInScope()
-				elseif not aiming then
-					currentTarget = nil
-				end
-
+				if aiming and not isCurrentTargetValid then currentTarget = getClosestTargetInScope() elseif not aiming then currentTarget = nil end
 				local aimPart, targetPlayer, targetModel = nil, nil, nil;
 				local partsToDrawESPFor = {}
-
 				if playerTargetEnabled and selectedPlayerTarget and selectedPlayerTarget.Character and selectedPlayerTarget ~= LocalPlayer then
-					if not isTeammate(selectedPlayerTarget) then
-						targetModel, targetPlayer = selectedPlayerTarget.Character, selectedPlayerTarget
-					else 
-						targetModel = nil 
-					end
-				elseif selectedPart and selectedPart.Parent then
-					targetModel = selectedPart:FindFirstAncestorOfClass("Model")
-					if targetModel then
-						local player = Players:GetPlayerFromCharacter(targetModel);
-						if not player or not isTeammate(player) then 
-							targetPlayer = player 
-						else 
-							targetModel = nil 
-						end
-					end
-				elseif aiming and currentTarget then
-					targetModel = currentTarget;
-					targetPlayer = Players:GetPlayerFromCharacter(targetModel)
-				end
-
-				if targetModel then 
-					aimPart = targetModel:FindFirstChild(partDropdown.Text) 
-				end
-				if selectedPart and selectedPart.Parent then 
-					table.insert(partsToDrawESPFor, {Part = selectedPart, Color = Color3.fromRGB(90, 170, 255), Name = "SelectedESP"}) 
-				end
-				
+					if not isTeammate(selectedPlayerTarget) then targetModel, targetPlayer = selectedPlayerTarget.Character, selectedPlayerTarget else targetModel = nil end
+				elseif aiming and currentTarget then targetModel = currentTarget; targetPlayer = Players:GetPlayerFromCharacter(targetModel) end
+				if targetModel then aimPart = targetModel:FindFirstChild(partDropdown.Text) end
 				getgenv().ZukaSilentAimTarget = nil
-
 				if aiming and aimPart and targetModel then
 					if not wallCheckEnabled or isPartVisible(aimPart) then
 						table.insert(partsToDrawESPFor, {Part = aimPart, Color = Color3.fromRGB(255, 80, 80), Name = "AimbotESP"});
 						local distance = (Camera.CFrame.Position - aimPart.Position).Magnitude;
-						
-						local predictionFactor = (distance / 2000) * (1 + (math.random(-50, 50) / 1000))
+						local predictionFactor = (distance / 2000) * (1 + (math.random(-50, 50) / 1000));
 						local predictedPosition = aimPart.Position + (aimPart.AssemblyLinearVelocity * predictionFactor);
-
-						if getgenv().silentAimEnabled then
-							getgenv().ZukaSilentAimTarget = predictedPosition
-						elseif smoothingEnabled then
-							local goalCFrame = CFrame.lookAt(Camera.CFrame.Position, predictedPosition)
-							local adjustedSmoothFactor = math.clamp(1 - (1 - smoothingFactor) ^ (60 * deltaTime), 0, 1)
-							Camera.CFrame = Camera.CFrame:Lerp(goalCFrame, adjustedSmoothFactor)
-						else
-							Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, predictedPosition)
-						end;
+						if getgenv().silentAimEnabled then getgenv().ZukaSilentAimTarget = predictedPosition elseif smoothingEnabled then local goalCFrame = CFrame.lookAt(Camera.CFrame.Position, predictedPosition); local adjustedSmoothFactor = math.clamp(1 - (1 - smoothingFactor) ^ (60 * deltaTime), 0, 1); Camera.CFrame = Camera.CFrame:Lerp(goalCFrame, adjustedSmoothFactor) else Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, predictedPosition) end;
 						statusLabel.Text = "Aimbot: Targeting " .. (targetPlayer and targetPlayer.Name or targetModel.Name)
-					else
-						statusLabel.Text = "Aimbot: Target is behind a wall";
-						currentTarget = nil
-					end
-				elseif aiming then
-					statusLabel.Text = "Aimbot: No visible target in index"
-				elseif not aiming and not selectedPart then
-					statusLabel.Text = "Aimbot ready. Hold toggle key to aim."
-				end
-
-				for part, espBox in pairs(activeESPs) do
-					local found = false;
-					for _, data in ipairs(partsToDrawESPFor) do if data.Part == part then found = true; break end end;
-					if not found or not part.Parent then clearESP(part) end
-				end
+					else statusLabel.Text = "Aimbot: Target is behind a wall"; currentTarget = nil end
+				elseif aiming then statusLabel.Text = "Aimbot: No visible target in index" elseif not aiming then statusLabel.Text = "Aimbot ready. Hold toggle key to aim." end
+				for part, espBox in pairs(activeESPs) do local found = false; for _, data in ipairs(partsToDrawESPFor) do if data.Part == part then found = true; break end end; if not found or not part.Parent then clearESP(part) end end
 				for _, data in ipairs(partsToDrawESPFor) do manageESP(data.Part, data.Color, data.Name) end
-			end)
+			end));
 			
-			silentAimToggle.MouseButton1Click:Connect(function() 
-				getgenv().silentAimEnabled = not getgenv().silentAimEnabled; 
-				silentAimToggle.Text = "Silent Aim: " .. (getgenv().silentAimEnabled and "ON" or "OFF") 
-			end)
-			ignoreTeamToggle.MouseButton1Click:Connect(function() 
-				ignoreTeamEnabled = not ignoreTeamEnabled; 
-				ignoreTeamToggle.Text = "Ignore Team: " .. (ignoreTeamEnabled and "ON" or "OFF") 
-			end)
-			wallCheckToggle.MouseButton1Click:Connect(function() 
-				wallCheckEnabled = not wallCheckEnabled; 
-				wallCheckToggle.Text = "Wall Check: " .. (wallCheckEnabled and "ON" or "OFF") 
-			end)
+			table.insert(janitor, silentAimToggle.MouseButton1Click:Connect(function() getgenv().silentAimEnabled = not getgenv().silentAimEnabled; silentAimToggle.Text = "Silent Aim: " .. (getgenv().silentAimEnabled and "ON" or "OFF") end))
+			table.insert(janitor, ignoreTeamToggle.MouseButton1Click:Connect(function() ignoreTeamEnabled = not ignoreTeamEnabled; ignoreTeamToggle.Text = "Ignore Team: " .. (ignoreTeamEnabled and "ON" or "OFF") end))
+			table.insert(janitor, wallCheckToggle.MouseButton1Click:Connect(function() wallCheckEnabled = not wallCheckEnabled; wallCheckToggle.Text = "Wall Check: " .. (wallCheckEnabled and "ON" or "OFF") end))
 			
 			local indexerUpdateSignal = Instance.new("BindableEvent")
-			
-			ExplorerButton.MouseButton1Click:Connect(function()
-				createExplorerWindow(statusLabel, indexerUpdateSignal)
-			end)
+			table.insert(janitor, ExplorerButton.MouseButton1Click:Connect(function() createExplorerWindow(statusLabel, indexerUpdateSignal) end))
 			task.spawn(function()
 				local function RebuildTargetIndex()
 					local newIndex = {}
 					if not getgenv().TargetScope or not getgenv().TargetScope.Parent then getgenv().TargetScope = Workspace end
-					for _, descendant in ipairs(getgenv().TargetScope:GetDescendants()) do
-						if descendant:IsA("Model") and descendant:FindFirstChildOfClass("Humanoid") then
-							table.insert(newIndex, descendant)
-						end
-					end
+					for _, descendant in ipairs(getgenv().TargetScope:GetDescendants()) do if descendant:IsA("Model") and descendant:FindFirstChildOfClass("Humanoid") then table.insert(newIndex, descendant) end end
 					getgenv().TargetIndex = newIndex
 				end
-				
-				indexerUpdateSignal.Event:Connect(RebuildTargetIndex)
-				while task.wait(2) and MainScreenGui.Parent do
-					RebuildTargetIndex()
-				end
+				table.insert(janitor, indexerUpdateSignal.Event:Connect(RebuildTargetIndex))
+				while task.wait(2) and MainScreenGui.Parent do RebuildTargetIndex() end
 			end)
 			indexerUpdateSignal:Fire()
+			
+			-- [NEW FEATURE] Handle command-line arguments for locking a target
+			if args and args[1] then
+				task.wait(0.1) -- Wait a brief moment for UI to be fully ready
+				local targetName = args[1]
+				if targetName:lower() == "clear" or targetName:lower() == "reset" or targetName:lower() == "off" then
+					playerTargetEnabled = false
+					selectedPlayerTarget = nil
+					targetPlayerToggle.Text = "Target Selected: OFF"
+					playerDropdown.Text = "None"
+					statusLabel.Text = "Aimbot ready. Hold toggle key to aim."
+					DoNotif("Aimbot target lock cleared.", 2)
+				else
+					local foundPlayer = Utilities.findPlayer(targetName)
+					if foundPlayer then
+						playerTargetEnabled = true
+						selectedPlayerTarget = foundPlayer
+						targetPlayerToggle.Text = "Target Selected: ON"
+						playerDropdown.Text = foundPlayer.Name
+						statusLabel.Text = "Aimbot: Will target " .. foundPlayer.Name
+						DoNotif("Aimbot locked onto target: " .. foundPlayer.Name, 3)
+					else
+						DoNotif("Target player '" .. targetName .. "' not found.", 3)
+					end
+				end
+			end
 		end
 	end)
 
 	if not success then
 		warn("Failed to load Aimbot GUI:", err)
 		if DoNotif then DoNotif("Error loading Aimbot: " .. tostring(err), 5) end
+		local gui = CoreGui:FindFirstChild("UTS_CGE_Suite")
+		if gui then gui:Destroy() end
 	end
 end
 
-RegisterCommand({ Name = "aimbot", Aliases = { "aim", "gamingchair", "a" }, Description = "Loads the advanced aimbot and ESP GUI." }, loadAimbotGUI)
+RegisterCommand({ 
+    Name = "aimbot", 
+    Aliases = { "aim", "gamingchair", "a" }, 
+    Description = "Loads the aimbot GUI. Optional: [player name] to lock target." 
+}, function(args)
+    -- Check if the GUI exists. If not, create it and pass the args.
+    if not game:GetService("CoreGui"):FindFirstChild("UTS_CGE_Suite") then
+        loadAimbotGUI(args)
+    else
+        -- If the GUI is already open, we can't easily pass new args into its scope in this structure.
+        -- For simplicity, we just notify the user. A more advanced system would use BindableEvents.
+        if args and args[1] then
+            DoNotif("Aimbot is already open. Re-open to set a command-line target.", 4)
+        else
+            DoNotif("Aimbot GUI is already open.", 2)
+        end
+    end
+end)
 
 
 Modules.Performance = {
@@ -11266,6 +10923,303 @@ function Modules.AvatarEditor:Initialize()
         self:Toggle()
     end)
 end
+
+
+Modules.BunnyHop = {
+    State = {
+        IsEnabled = false,
+        IsJumping = false,
+        Connection = nil
+    },
+    Services = {
+        Players = game:GetService("Players"),
+        UserInputService = game:GetService("UserInputService"),
+        RunService = game:GetService("RunService")
+    }
+}
+
+function Modules.BunnyHop:OnStepped()
+    if not self.State.IsEnabled or not self.State.IsJumping then return end
+    
+    local character = self.Services.Players.LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    
+    if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then
+        humanoid.Jump = true
+    end
+end
+
+function Modules.BunnyHop:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+    
+    self.State.Connection = self.Services.RunService.Stepped:Connect(function() self:OnStepped() end)
+
+    DoNotif("BunnyHop: ENABLED", 2)
+end
+
+function Modules.BunnyHop:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+    
+    if self.State.Connection then
+        self.State.Connection:Disconnect()
+        self.State.Connection = nil
+    end
+
+    DoNotif("BunnyHop: DISABLED", 2)
+end
+
+function Modules.BunnyHop:Initialize()
+    local module = self
+    
+    module.Services.UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if not gameProcessed and input.KeyCode == Enum.KeyCode.Space then
+            module.State.IsJumping = true
+        end
+    end)
+    
+    module.Services.UserInputService.InputEnded:Connect(function(input)
+        if input.KeyCode == Enum.KeyCode.Space then
+            module.State.IsJumping = false
+        end
+    end)
+    
+    RegisterCommand({
+        Name = "bhop",
+        Aliases = {"bunnyhop"},
+        Description = "Toggles automatic jumping while holding the spacebar."
+    }, function()
+        if module.State.IsEnabled then
+            module:Disable()
+        else
+            module:Enable()
+        end
+    end)
+end
+
+Modules.Chams = {
+    State = {
+        IsEnabled = false,
+        TrackedCharacters = setmetatable({}, {__mode = "k"}),
+        OriginalProperties = setmetatable({}, {__mode = "k"}),
+        Connections = {}
+    },
+    Config = {
+        VisibleColor = Color3.fromRGB(0, 255, 0),
+        OccludedColor = Color3.fromRGB(255, 0, 0),
+        Material = Enum.Material.Neon,
+        HighlightTransparency = 0
+    },
+    Services = {
+        Players = game:GetService("Players"),
+        RunService = game:GetService("RunService")
+    }
+}
+
+function Modules.Chams:_apply(character)
+    if not character or self.State.TrackedCharacters[character] then return end
+    
+    local highlight = Instance.new("Highlight", character)
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.FillColor = self.Config.OccludedColor
+    highlight.OutlineColor = Color3.fromRGB(0, 0, 0)
+    highlight.FillTransparency = self.Config.HighlightTransparency
+
+    local innerHighlight = Instance.new("Highlight", character)
+    innerHighlight.DepthMode = Enum.HighlightDepthMode.Occluded
+    innerHighlight.FillColor = self.Config.VisibleColor
+    innerHighlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    innerHighlight.FillTransparency = self.Config.HighlightTransparency
+
+    self.State.TrackedCharacters[character] = {highlight, innerHighlight}
+end
+
+function Modules.Chams:_revert(character)
+    if not character or not self.State.TrackedCharacters[character] then return end
+    
+    for _, effect in ipairs(self.State.TrackedCharacters[character]) do
+        pcall(function() effect:Destroy() end)
+    end
+    self.State.TrackedCharacters[character] = nil
+end
+
+function Modules.Chams:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+
+    local function setupPlayer(player)
+        if player == self.Services.Players.LocalPlayer then return end
+        
+        if player.Character then
+            self:_apply(player.Character)
+        end
+        
+        self.State.Connections[player] = {}
+        self.State.Connections[player].CharacterAdded = player.CharacterAdded:Connect(function(char) self:_apply(char) end)
+        self.State.Connections[player].CharacterRemoving = player.CharacterRemoving:Connect(function(char) self:_revert(char) end)
+    end
+
+    for _, player in ipairs(self.Services.Players:GetPlayers()) do
+        setupPlayer(player)
+    end
+
+    self.State.Connections.PlayerAdded = self.Services.Players.PlayerAdded:Connect(setupPlayer)
+    self.State.Connections.PlayerRemoving = self.Services.Players.PlayerRemoving:Connect(function(player)
+        if self.State.Connections[player] then
+            for _, conn in pairs(self.State.Connections[player]) do
+                conn:Disconnect()
+            end
+            self.State.Connections[player] = nil
+        end
+    end)
+    
+    DoNotif("Chams: ENABLED", 2)
+end
+
+function Modules.Chams:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+    
+    for player, conns in pairs(self.State.Connections) do
+        if type(conns) == "table" then
+            for _, conn in pairs(conns) do
+                conn:Disconnect()
+            end
+        else
+            conns:Disconnect()
+        end
+    end
+    table.clear(self.State.Connections)
+
+    for character, _ in pairs(self.State.TrackedCharacters) do
+        self:_revert(character)
+    end
+    
+    DoNotif("Chams: DISABLED", 2)
+end
+
+RegisterCommand({
+    Name = "chams",
+    Aliases = {},
+    Description = "Toggles a solid color ESP on all other players."
+}, function()
+    if Modules.Chams.State.IsEnabled then
+        Modules.Chams:Disable()
+    else
+        Modules.Chams:Enable()
+    end
+end)
+
+Modules.InfiniteJump = {
+    State = {
+        IsEnabled = false,
+        Connection = nil
+    },
+    Services = {
+        Players = game:GetService("Players"),
+        UserInputService = game:GetService("UserInputService")
+    }
+}
+
+function Modules.InfiniteJump:OnInput(input, gameProcessed)
+    if gameProcessed or not self.State.IsEnabled then return end
+
+    if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.Space then
+        local character = self.Services.Players.LocalPlayer.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        
+        if humanoid and humanoid:GetState() ~= Enum.HumanoidStateType.Jumping then
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end
+end
+
+function Modules.InfiniteJump:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+    
+    self.State.Connection = self.Services.UserInputService.JumpRequest:Connect(function()
+        self:OnInput({UserInputType = Enum.UserInputType.Keyboard, KeyCode = Enum.KeyCode.Space}, false)
+    end)
+
+    DoNotif("Infinite Jump: ENABLED", 2)
+end
+
+function Modules.InfiniteJump:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+    
+    if self.State.Connection then
+        self.State.Connection:Disconnect()
+        self.State.Connection = nil
+    end
+
+    DoNotif("Infinite Jump: DISABLED", 2)
+end
+
+RegisterCommand({
+    Name = "infjump",
+    Aliases = {"infinitejump"},
+    Description = "Toggles the ability to jump infinitely in the air."
+}, function()
+    if Modules.InfiniteJump.State.IsEnabled then
+        Modules.InfiniteJump:Disable()
+    else
+        Modules.InfiniteJump:Enable()
+    end
+end)
+
+Modules.Gravity = {
+    State = {
+        IsEnabled = false,
+        OriginalGravity = nil
+    },
+    Services = {
+        Workspace = game:GetService("Workspace")
+    }
+}
+
+function Modules.Gravity:Enable(newGravityValue)
+    if not self.State.IsEnabled then
+        self.State.OriginalGravity = self.Services.Workspace.Gravity
+    end
+    self.State.IsEnabled = true
+    
+    local newGravity = tonumber(newGravityValue)
+    if not newGravity or newGravity <= 0 then
+        newGravity = 75
+        DoNotif("No gravity value provided. Defaulting to " .. newGravity, 2)
+    end
+    
+    self.Services.Workspace.Gravity = newGravity
+    DoNotif("Client gravity set to: " .. newGravity, 2)
+end
+
+function Modules.Gravity:Disable()
+    if not self.State.IsEnabled then return end
+    
+    if self.State.OriginalGravity then
+        self.Services.Workspace.Gravity = self.State.OriginalGravity
+    end
+    
+    self.State.IsEnabled = false
+    self.State.OriginalGravity = nil
+    DoNotif("Client gravity restored to default.", 2)
+end
+
+RegisterCommand({
+    Name = "gravity",
+    Aliases = {"grav"},
+    Description = "Sets the client-sided workspace gravity. Use 'reset' to disable."
+}, function(args)
+    local argument = args[1]
+    if argument and (argument:lower() == "reset" or argument:lower() == "off") then
+        Modules.Gravity:Disable()
+    else
+        Modules.Gravity:Enable(argument)
+    end
+end)
 
 Modules.FixCamera = {
     State = {
