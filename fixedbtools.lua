@@ -338,11 +338,11 @@ do
     local toggleGui = CoreGui:FindFirstChild("iBToolsToggle")
     if toggleGui then toggleGui:Destroy() end
 
-    local toggleButton = Instance.new("ScreenGui")
-    toggleButton.Name = "iBToolsToggle"
-    toggleButton.ResetOnSpawn = false
+    local toggleButtonGui = Instance.new("ScreenGui")
+    toggleButtonGui.Name = "iBToolsToggle"
+    toggleButtonGui.ResetOnSpawn = false
     
-    local textButton = Instance.new("TextButton", toggleButton)
+    local textButton = Instance.new("TextButton", toggleButtonGui)
     textButton.Size = UDim2.new(0, 150, 0, 40)
     textButton.Position = UDim2.new(0, 20, 0, 20)
     textButton.Text = "Toggle iBTools"
@@ -355,8 +355,56 @@ do
     stroke.Thickness = 1.5
     stroke.Color = Color3.fromRGB(80, 110, 255)
 
-    textButton.MouseButton1Click:Connect(Toggle)
+    -- [FIX] Draggable button logic with click vs. drag detection.
+    local isDragging = false
+    local dragStart = nil
+    local startPosition = nil
+    local DRAG_THRESHOLD = 10 -- Pixels the mouse must move to be considered a drag
+
+    textButton.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragStart = input.Position
+            startPosition = textButton.Position
+            isDragging = false -- Reset state on new touch
+        end
+    end)
+
+    textButton.InputChanged:Connect(function(input)
+        if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and dragStart then
+            local delta = input.Position - dragStart
+            
+            -- Only start dragging if the threshold is passed
+            if not isDragging and delta.Magnitude > DRAG_THRESHOLD then
+                isDragging = true
+            end
+            
+            if isDragging then
+                textButton.Position = UDim2.new(
+                    startPosition.X.Scale,
+                    startPosition.X.Offset + delta.X,
+                    startPosition.Y.Scale,
+                    startPosition.Y.Offset + delta.Y
+                )
+            end
+        end
+    end)
+
+    textButton.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragStart = nil
+            startPosition = nil
+        end
+    end)
+
+    -- The Activated event fires on release, which is perfect for this.
+    textButton.Activated:Connect(function()
+        -- Only toggle the UI if the user was NOT dragging.
+        if not isDragging then
+            Toggle()
+        end
+        isDragging = false -- Reset state after the action
+    end)
     
-    NaProtectUI(toggleButton)
+    NaProtectUI(toggleButtonGui)
     print("iBTools is ready. Click the toggle button to start.")
 end
