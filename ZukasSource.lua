@@ -973,6 +973,22 @@ Modules.AstralProjection = {
     Services = {}
 }
 
+function Modules.AstralProjection:_updateUIState()
+    local button = self.GUI.astralButton
+    if not button then return end
+
+    if self.State.isSpawning then
+        button.BackgroundColor3 = Color3.fromRGB(255, 160, 0)
+        button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    elseif self.State.isProjecting then
+        button.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
+        button.TextColor3 = Color3.fromRGB(10, 10, 10)
+    else
+        button.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+        button.TextColor3 = Color3.fromRGB(200, 200, 220)
+    end
+end
+
 function Modules.AstralProjection:_applyVisuals(character, isAstral)
     local highlight = character:FindFirstChild("AstralHighlight")
     if isAstral and not highlight then
@@ -988,98 +1004,84 @@ end
 
 function Modules.AstralProjection:_setState(shouldProject)
     if self.State.isSpawning then
-        print("Desync: Cannot toggle while spawning.")
         return
     end
     if self.State.isProjecting == shouldProject then return end
 
     local character = self.Services.LocalPlayer.Character
     if not character then return end
-
+    
     local hrp = character:FindFirstChild("HumanoidRootPart")
     local humanoid = character:FindFirstChildOfClass("Humanoid")
 
     if shouldProject then
         if not hrp or not humanoid or not hrp.Parent then return end
-
-        --// --- UNIFIED DESYNC METHOD: Un-parent the HRP ---
-        -- 1. Store critical references before making changes.
+        
         self.State.originalHRP = hrp
         self.State.originalParent = character
-        local originalCFrame = hrp.CFrame -- Capture CFrame before desyncing.
-
-        -- 2. Perform the desync action. This is the only line that causes the desync.
+        local originalCFrame = hrp.CFrame
+        
         self.State.originalHRP.Parent = nil
-
-        -- 3. Update internal state and create visuals.
+        
         self.State.isProjecting = true
-
         if self.State.positionMarker then self.State.positionMarker:Destroy() end
+        
         local marker = Instance.new("Part")
         marker.Name = "PhysicalAnchor"
         marker.Size = Vector3.new(4, 5, 2)
-        marker.CFrame = originalCFrame -- Use the captured CFrame for perfect accuracy.
-        marker.Anchored = true -- The MARKER is anchored, not the player.
+        marker.CFrame = originalCFrame
+        marker.Anchored = true
         marker.CanCollide = false
         marker.Transparency = 0.7
         marker.Parent = self.Services.Workspace
         self.State.positionMarker = marker
-
+        
         local highlight = Instance.new("Highlight", marker)
         highlight.FillColor = Color3.fromRGB(255, 50, 50)
         highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
         highlight.FillTransparency = 0.6
-
+        
         humanoid:ChangeState(Enum.HumanoidStateType.Running)
-
         self:_applyVisuals(character, true)
-        self.GUI.statusLabel.Text = "Desync: ENABLED"
         DoNotif("Desync: ENABLED", 1.5)
-
     else
-        -- Check if we have valid data to restore from.
         if not self.State.originalHRP or not self.State.originalParent or not self.State.originalParent.Parent then
-            self.State.isProjecting = false -- Force reset state if invalid.
+            self.State.isProjecting = false 
             return
         end
-
         if self.State.positionMarker then
             self.State.positionMarker:Destroy()
             self.State.positionMarker = nil
         end
         
-
         self.State.originalHRP.Parent = self.State.originalParent
         
-        -- Clean up state variables *after* re-syncing.
         self.State.isProjecting = false
         self.State.originalHRP = nil
         self.State.originalParent = nil
-
         self:_applyVisuals(character, false)
-        self.GUI.statusLabel.Text = "Desync: DISABLED"
         DoNotif("Desync: DISABLED", 1.5)
     end
+    self:_updateUIState()
 end
 
 function Modules.AstralProjection:_onDied()
-    print("Desync: Death detected. Forcing resynchronization...")
     self:_setState(false)
 end
 
 function Modules.AstralProjection:_onCharacterAdded(character)
     self.State.isSpawning = true
-    self.GUI.statusLabel.Text = "Desync: RESPAWNING..."
+    self:_updateUIState()
 
     if self.State.isProjecting then self:_setState(false) end
     if self.State.deathConnection then self.State.deathConnection:Disconnect() end
-
+    
     local humanoid = character:WaitForChild("Humanoid")
     self.State.deathConnection = humanoid.Died:Connect(function() self:_onDied() end)
-
+    
     task.wait(self.Config.SPAWN_PROTECTION_DURATION)
     self.State.isSpawning = false
-    self.GUI.statusLabel.Text = "Desync: DISABLED"
+    self:_updateUIState()
 end
 
 function Modules.AstralProjection:Toggle()
@@ -1087,7 +1089,6 @@ function Modules.AstralProjection:Toggle()
 end
 
 function Modules.AstralProjection:Initialize()
-    --// --- SERVICES & CORE VARIABLES ---
     self.Services.Players = game:GetService("Players")
     self.Services.UserInputService = game:GetService("UserInputService")
     self.Services.RunService = game:GetService("RunService")
@@ -1095,23 +1096,30 @@ function Modules.AstralProjection:Initialize()
     self.Services.LocalPlayer = self.Services.Players.LocalPlayer
     local PLAYER_GUI = self.Services.LocalPlayer:WaitForChild("PlayerGui")
 
-    --// --- GUI ELEMENTS ---
     local screenGui = Instance.new("ScreenGui", PLAYER_GUI)
-    screenGui.Name = "AstralStatusGUI"
+    screenGui.Name = "AstralStatusGUI_V2"
     screenGui.ResetOnSpawn = false
     self.GUI.screenGui = screenGui
 
-    local statusLabel = Instance.new("TextLabel", screenGui)
-    statusLabel.Size = UDim2.new(0, 250, 0, 30)
-    statusLabel.Position = UDim2.new(0.5, -125, 0, 150)
-    statusLabel.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    statusLabel.BackgroundTransparency = 0.3
-    statusLabel.TextColor3 = Color3.fromRGB(0, 200, 255)
-    statusLabel.Font = Enum.Font.SourceSansBold
-    statusLabel.Text = "Astral Projection: DISABLED"
-    self.GUI.statusLabel = statusLabel
+    local astralButton = Instance.new("TextButton", screenGui)
+    astralButton.Name = "AstralToggleButton"
+    astralButton.Size = UDim2.fromOffset(64, 64)
+    astralButton.AnchorPoint = Vector2.new(1, 1)
+    astralButton.Position = UDim2.new(1, -20, 1, -20)
+    astralButton.Font = Enum.Font.GothamBold
+    astralButton.Text = "DSYNC"
+    astralButton.TextSize = 14
+    Instance.new("UICorner", astralButton).CornerRadius = UDim.new(1, 0)
+    
+    local stroke = Instance.new("UIStroke", astralButton)
+    stroke.Color = Color3.fromRGB(100, 100, 120)
+    stroke.Thickness = 1.5
+    self.GUI.astralButton = astralButton
+    
+    self:_updateUIState()
 
-    --// --- EVENT CONNECTIONS ---
+    astralButton.MouseButton1Click:Connect(function() self:Toggle() end)
+
     self.Services.UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed or input.KeyCode ~= self.Config.TOGGLE_KEY then return end
         self:Toggle()
@@ -1120,11 +1128,10 @@ function Modules.AstralProjection:Initialize()
     if self.Services.LocalPlayer.Character then
         self:_onCharacterAdded(self.Services.LocalPlayer.Character)
     end
+
     self.Services.LocalPlayer.CharacterAdded:Connect(function(character)
         self:_onCharacterAdded(character)
     end)
-
-    print("--- Astral Projection V10 (Anchor Core) Module Initialized ---")
 end
 
 
@@ -5288,6 +5295,196 @@ function Modules.StalkerBot:Initialize()
     end)
 end
 
+Modules.InfoPanel = {
+    State = {
+        IsEnabled = false,
+        UI = {},
+        Connections = {}
+    },
+    Services = {
+        Players = game:GetService("Players"),
+        RunService = game:GetService("RunService"),
+        CoreGui = game:GetService("CoreGui"),
+        Workspace = game:GetService("Workspace")
+    }
+}
+
+function Modules.InfoPanel:Toggle()
+    if self.State.IsEnabled then
+        if self.State.Connections.Updater then
+            self.State.Connections.Updater:Disconnect()
+        end
+        if self.State.UI.ScreenGui then
+            self.State.UI.ScreenGui:Destroy()
+        end
+        self.State = { IsEnabled = false, UI = {}, Connections = {} }
+        DoNotif("Info Panel closed.", 2)
+        return
+    end
+
+    self.State.IsEnabled = true
+    DoNotif("Info Panel opened.", 2)
+
+    local localPlayer = self.Services.Players.LocalPlayer
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "InfoPanel_Zuka_Radiant"
+    screenGui.ResetOnSpawn = false
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    self.State.UI.ScreenGui = screenGui
+
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Size = UDim2.fromOffset(320, 450)
+    mainFrame.Position = UDim2.fromScale(0.5, 0.5)
+    mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(34, 32, 38)
+    mainFrame.BackgroundTransparency = 0.1
+    mainFrame.Draggable = true
+    mainFrame.Active = true
+    mainFrame.Parent = screenGui
+    Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
+    
+    local uiStroke = Instance.new("UIStroke", mainFrame)
+    uiStroke.Color = Color3.fromRGB(255, 105, 180)
+    uiStroke.Thickness = 2
+    uiStroke.Transparency = 0.3
+
+    local titleBar = Instance.new("Frame", mainFrame)
+    titleBar.Size = UDim2.new(1, 0, 0, 30)
+    titleBar.BackgroundTransparency = 1
+    
+    local titleLabel = Instance.new("TextLabel", titleBar)
+    titleLabel.Size = UDim2.new(1, -30, 1, 0)
+    titleLabel.Position = UDim2.fromOffset(10, 0)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Font = Enum.Font.GothamSemibold
+    titleLabel.Text = "Game & Player Information"
+    titleLabel.TextColor3 = Color3.fromRGB(255, 182, 193)
+    titleLabel.TextSize = 16
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+    local closeButton = Instance.new("TextButton", titleBar)
+    closeButton.Size = UDim2.fromOffset(24, 24)
+    closeButton.Position = UDim2.new(1, -28, 0.5, -12)
+    closeButton.BackgroundTransparency = 1
+    closeButton.Font = Enum.Font.GothamBold
+    closeButton.Text = "X"
+    closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeButton.TextSize = 20
+    closeButton.Parent = titleBar
+    Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 6)
+    closeButton.MouseButton1Click:Connect(function()
+        self:Toggle()
+    end)
+
+    local scroll = Instance.new("ScrollingFrame", mainFrame)
+    scroll.Size = UDim2.new(1, 0, 1, -30)
+    scroll.Position = UDim2.new(0, 0, 0, 30)
+    scroll.BackgroundTransparency = 1
+    scroll.BorderSizePixel = 0
+    scroll.ScrollBarThickness = 6
+    scroll.ScrollBarImageColor3 = Color3.fromRGB(255, 105, 180)
+
+    local listLayout = Instance.new("UIListLayout", scroll)
+    listLayout.Padding = UDim.new(0, 5)
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    local padding = Instance.new("UIPadding", scroll)
+    padding.PaddingLeft = UDim.new(0, 10)
+    padding.PaddingRight = UDim.new(0, 10)
+    padding.PaddingTop = UDim.new(0, 10)
+
+    local function createHeader(text: string)
+        local header = Instance.new("TextLabel")
+        header.Size = UDim2.new(1, 0, 0, 24)
+        header.BackgroundTransparency = 1
+        header.Font = Enum.Font.GothamBold
+        header.Text = text
+        header.TextColor3 = Color3.fromRGB(255, 182, 193)
+        header.TextSize = 18
+        header.TextXAlignment = Enum.TextXAlignment.Left
+        header.Parent = scroll
+    end
+
+    local function createInfoEntry(key: string, value: any)
+        local entry = Instance.new("TextLabel")
+        entry.Size = UDim2.new(1, 0, 0, 18)
+        entry.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+        entry.BackgroundTransparency = 0.8
+        entry.Font = Enum.Font.Code
+        entry.TextSize = 14
+        entry.TextColor3 = Color3.fromRGB(220, 220, 220)
+        entry.TextXAlignment = Enum.TextXAlignment.Left
+        entry.RichText = true
+        entry.Text = string.format("  <font color='#AAAAAA'>%s:</font> %s", key, tostring(value))
+        entry.Parent = scroll
+        Instance.new("UICorner", entry).CornerRadius = UDim.new(0, 4)
+        return entry
+    end
+
+    createHeader("Client Info")
+    createInfoEntry("DisplayName", localPlayer.DisplayName)
+    createInfoEntry("Username", localPlayer.Name)
+    createInfoEntry("User ID", localPlayer.UserId)
+    createInfoEntry("Account Age", localPlayer.AccountAge)
+    local fpsLabel = createInfoEntry("Client FPS", "Calculating...")
+
+    createHeader("Game Info")
+    createInfoEntry("Place ID", game.PlaceId)
+    createInfoEntry("Job ID", game.JobId)
+    createInfoEntry("Creator Type", game.CreatorType.Name)
+    createInfoEntry("Creator ID", game.CreatorId)
+
+    createHeader("Server Players")
+    local playerListFrame = Instance.new("Frame", scroll)
+    playerListFrame.Size = UDim2.new(1, 0, 0, 0)
+    playerListFrame.BackgroundTransparency = 1
+    playerListFrame.AutomaticSize = Enum.AutomaticSize.Y
+    local playerListLayout = Instance.new("UIListLayout", playerListFrame)
+    playerListLayout.Padding = UDim.new(0, 2)
+
+    local lastTick = 0
+    self.State.Connections.Updater = self.Services.RunService.Heartbeat:Connect(function(step)
+        if not screenGui.Parent then
+            self:Toggle()
+            return
+        end
+
+        local now = tick()
+        if now - lastTick > 0.5 then
+            lastTick = now
+            fpsLabel.Text = string.format("  <font color='#AAAAAA'>Client FPS:</font> %.1f", 1 / step)
+            
+            for _, child in ipairs(playerListFrame:GetChildren()) do
+                if child:IsA("TextLabel") then
+                    child:Destroy()
+                end
+            end
+            
+            local players = self.Services.Players:GetPlayers()
+            for _, player in ipairs(players) do
+                local playerLabel = Instance.new("TextLabel", playerListFrame)
+                playerLabel.Size = UDim2.new(1, 0, 0, 16)
+                playerLabel.BackgroundTransparency = 1
+                playerLabel.Font = Enum.Font.Code
+                playerLabel.TextSize = 13
+                playerLabel.TextColor3 = player.TeamColor.Color
+                playerLabel.Text = string.format("- %s (@%s)", player.DisplayName, player.Name)
+                playerLabel.TextXAlignment = Enum.TextXAlignment.Left
+            end
+        end
+    end)
+    
+    screenGui.Parent = self.Services.CoreGui
+end
+
+RegisterCommand({
+    Name = "infopanel",
+    Aliases = {"info", "gameinfo", "serverinfo"},
+    Description = "Toggles a panel with information about the game, server, and players."
+}, function(args)
+    Modules.InfoPanel:Toggle()
+end)
+
 Modules.StalkBot = {
     State = {
         IsEnabled = false,
@@ -9009,6 +9206,85 @@ RegisterCommand({
     Modules.RemoteInteractor:Execute()
 end)
 
+Modules.InstantRespawn = {
+    State = {
+        IsEnabled = false,
+        CharacterAddedConnection = nil,
+        DiedConnection = nil
+    },
+    Services = {
+        Players = game:GetService("Players")
+    }
+}
+
+function Modules.InstantRespawn:_setupCharacter(character: Model)
+    if self.State.DiedConnection and self.State.DiedConnection.Connected then
+        self.State.DiedConnection:Disconnect()
+    end
+    self.State.DiedConnection = nil
+
+    local humanoid = character:WaitForChild("Humanoid", 2)
+    if not humanoid then return end
+
+    self.State.DiedConnection = humanoid.Died:Connect(function()
+        if self.State.IsEnabled then
+            task.defer(self.Services.Players.LocalPlayer.LoadCharacter, self.Services.Players.LocalPlayer)
+        end
+    end)
+end
+
+function Modules.InstantRespawn:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+    
+    local localPlayer = self.Services.Players.LocalPlayer
+    
+    self.State.CharacterAddedConnection = localPlayer.CharacterAdded:Connect(function(char)
+        self:_setupCharacter(char)
+    end)
+    
+    if localPlayer.Character then
+        self:_setupCharacter(localPlayer.Character)
+    end
+    
+    DoNotif("Instant Respawn: ENABLED.", 2)
+end
+
+function Modules.InstantRespawn:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+    
+    if self.State.CharacterAddedConnection then
+        self.State.CharacterAddedConnection:Disconnect()
+        self.State.CharacterAddedConnection = nil
+    end
+    
+    if self.State.DiedConnection then
+        self.State.DiedConnection:Disconnect()
+        self.State.DiedConnection = nil
+    end
+    
+    DoNotif("Instant Respawn: DISABLED.", 2)
+end
+
+function Modules.InstantRespawn:Toggle()
+    if self.State.IsEnabled then
+        self:Disable()
+    else
+        self:Enable()
+    end
+end
+
+function Modules.InstantRespawn:Initialize()
+    local module = self
+    RegisterCommand({
+        Name = "instrespawn",
+        Aliases = {"fastrespawn", "ir"},
+        Description = "Toggles instant character respawn upon death."
+    }, function()
+        module:Toggle()
+    end)
+end
 
 Modules.BlockRemote = {
     State = {
@@ -11629,4 +11905,4 @@ end)
 else
 LocalPlayer.Chatted:Connect(processCommand)
 end
-DoNotif("Thanks for using my script.", 3)
+DoNotif("Thanks for using my script. use ; for command bar.", 3)
