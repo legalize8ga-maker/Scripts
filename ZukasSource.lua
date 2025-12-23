@@ -212,13 +212,10 @@ function Utilities.findPlayer(inputName)
 end
 
 local function loadAimbotGUI(args)
-	-- This function encapsulates the entire aimbot script.
-	-- It's called when the user runs the ';aimbot' command.
 
-	-- Services
+
 	local CoreGui = game:GetService("CoreGui")
 
-	-- Check if the GUI already exists to prevent duplicates
 	if CoreGui:FindFirstChild("UTS_CGE_Suite") and not args then
 		if DoNotif then
 			DoNotif("Aimbot GUI is already open.", 2)
@@ -229,9 +226,6 @@ local function loadAimbotGUI(args)
 	end
 	
 	if CoreGui:FindFirstChild("UTS_CGE_Suite") then
-		-- GUI exists, but we are passing new arguments to it.
-		-- This is where you would send events to an already-running GUI if it was fully modular.
-		-- For this structure, we'll just notify and let the logic at the end handle it.
 	end
 
 	local success, err = pcall(function()
@@ -971,7 +965,7 @@ Modules.AstralProjection = {
         positionMarker = nil
     },
     Config = {
-        TOGGLE_KEY = Enum.KeyCode.M,
+        TOGGLE_KEY = Enum.KeyCode.P,
         SPAWN_PROTECTION_DURATION = 2
     },
     GUI = {},
@@ -9154,94 +9148,83 @@ function Modules.BlockRemote:Initialize()
 end
 
 Modules.ForceRespawn = {
-    -- This module does not require persistent state, so the State table is omitted.
+    -- No state needed for this action-based module.
 }
 
---- Executes the client-sided respawn sequence.
 function Modules.ForceRespawn:Execute()
-    --// SERVICES
     local Players = game:GetService("Players")
-    local Workspace = game:GetService("Workspace")
+    local LocalPlayer = Players.LocalPlayer
 
-    --// CONSTANTS & LOCALS
-    local localPlayer: Player = Players.LocalPlayer
-    local character: Model? = localPlayer.Character
-    local humanoidRootPart: BasePart? = character and character:FindFirstChild("HumanoidRootPart")
-
-    --// VALIDATION
-    if not (character and humanoidRootPart) then
-        DoNotif("Cannot respawn: Character or HumanoidRootPart not found.", 3)
+    if not LocalPlayer then
+        DoNotif("Cannot respawn: LocalPlayer not found.", 3)
         return
     end
 
-    --// CAPTURE CURRENT STATE
-    -- We save the CFrame of both the character and camera to restore them post-respawn.
-    local originalCharacterCFrame: CFrame = humanoidRootPart.CFrame
-    local originalCameraCFrame: CFrame = Workspace.CurrentCamera.CFrame
+    DoNotif("Attempting to force respawn...", 2)
 
-    --// RESPAWN LOGIC
     local success, err = pcall(function()
-        -- [METHOD 1] Executor-Specific Respawn (High Reliability)
-        -- This attempts to use non-standard, environment-specific functions for a cleaner respawn.
-        -- 'gethiddenproperty' checks if the game prevents standard character deletion methods.
-        local isDeletionRejected: boolean = gethiddenproperty(Workspace, "RejectCharacterDeletions")
-
-        if isDeletionRejected and replicatesignal then
-            -- If character deletion is rejected and we have 'replicatesignal', use the high-level method.
-            replicatesignal(localPlayer.ConnectDiedSignalBackend)
-            task.wait(Players.RespawnTime - 0.1) -- Wait just before the default respawn time.
-            replicatesignal(localPlayer.Kill)
-        else
-            -- [METHOD 2] Manual Fallback Respawn (Universal Compatibility)
-            -- This method works in most environments by manually destroying the character
-            -- and tricking the engine into loading a new one.
-            local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                humanoid:ChangeState(Enum.HumanoidStateType.Dead)
-            end
-            character:ClearAllChildren()
-
-            -- Create a temporary model to force the character property to update.
-            local tempModel = Instance.new("Model")
-            tempModel.Parent = Workspace
-            localPlayer.Character = tempModel
-            task.wait() -- Wait for replication cycle.
-            localPlayer.Character = nil -- Setting to nil triggers the standard respawn logic.
-            tempModel:Destroy()
-        end
+        LocalPlayer:LoadCharacter()
     end)
 
     if not success then
-        warn("[ForceRespawn] Respawn logic failed:", err)
-        DoNotif("Respawn failed. See developer console for details.", 4)
-        return
+        warn("[ForceRespawn] LoadCharacter failed:", err)
+        DoNotif("Respawn request failed. The server may have rejected it.", 4)
     end
+end
 
-    --// STATE RESTORATION
-    -- Spawn a new thread to wait for the new character and restore the saved positions.
-    task.spawn(function()
-        local pcallSuccess, newCharacter = pcall(function()
-            return localPlayer.CharacterAdded:Wait()
-        end)
-
-        if not pcallSuccess then return end
-
-        local newHrp = newCharacter:WaitForChild("HumanoidRootPart", 5)
-        if newHrp then
-            newHrp.CFrame = originalCharacterCFrame
-            Workspace.CurrentCamera.CFrame = originalCameraCFrame
-        end
+function Modules.ForceRespawn:Initialize()
+    RegisterCommand({
+        Name = "respawn",
+        Aliases = {"re", "rr"},
+        Description = "Forces your character to respawn. Useful if you are stuck or punished."
+    }, function()
+        Modules.ForceRespawn:Execute()
     end)
 end
 
---// COMMAND REGISTRATION
-RegisterCommand({
-    Name = "respawn",
-    Aliases = {"re", "rr"},
-    Description = "Forces a client-sided character respawn, attempting to preserve position."
-}, function()
-    Modules.ForceRespawn:Execute()
-end)
+Modules.ForceSpawn = {}
+
+function Modules.ForceSpawn:Execute()
+    local Players = game:GetService("Players")
+    local Workspace = game:GetService("Workspace")
+    local localPlayer = Players.LocalPlayer
+
+    if localPlayer.Character then
+        DoNotif("Your character already exists. Use '.respawn' to reset a broken character.", 4)
+        return
+    end
+
+    DoNotif("Attempting to trigger server-side spawn from nil character...", 2)
+
+    local success, err = pcall(function()
+        local tempModel = Instance.new("Model")
+        tempModel.Name = "ZukaSpawnTrigger"
+        tempModel.Parent = Workspace
+
+        localPlayer.Character = tempModel
+        
+        task.wait()
+
+        localPlayer.Character = nil
+
+        tempModel:Destroy()
+    end)
+
+    if not success then
+        warn("[ForceSpawn] Spawn trigger logic failed:", err)
+        DoNotif("Spawn trigger failed. See developer console for details.", 4)
+    end
+end
+
+function Modules.ForceSpawn:Initialize()
+    RegisterCommand({
+        Name = "spawn",
+        Aliases = {"forcespawn"},
+        Description = "Forces your character to spawn if you are stuck as a camera (no character)."
+    }, function()
+        Modules.ForceSpawn:Execute()
+    end)
+end
 
 Modules.SuperPush = {
 State = {
