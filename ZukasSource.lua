@@ -3,6 +3,19 @@ made by zuka @OverZuka on roblox
 v4.5 Monday, December 22nd
 github - loadstring(game:HttpGet("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/ZukasSource.lua"))()
 
+
+__________      __         ___________           .__     
+\____    /__ __|  | _______\__    ___/___   ____ |  |__  
+  /     /|  |  \  |/ /\__  \ |    |_/ __ \_/ ___\|  |  \ 
+ /     /_|  |  /    <  / __ \|    |\  ___/\  \___|   Y  \
+/_______ \____/|__|_ \(____  /____| \___  >\___  >___|  /
+        \/          \/     \/           \/     \/     \/ 
+   _____       .___      .__        
+  /  _  \    __| _/_____ |__| ____  
+ /  /_\  \  / __ |/     \|  |/    \ 
+/    |    \/ /_/ |  Y Y  \  |   |  \
+\____|__  /\____ |__|_|  /__|___|  /
+        \/      \/     \/        \/ 
 --]]
 
 local TweenService = game:GetService("TweenService")
