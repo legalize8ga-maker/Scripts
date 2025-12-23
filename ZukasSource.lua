@@ -126,7 +126,7 @@ function Utilities.findPlayer(inputName)
             end
             return exactMatch or partialMatch
         end
-        local Prefix = "."
+        local Prefix = ";"
         local Commands = {}
         local CommandInfo = {}
         local Modules = {}
@@ -1442,7 +1442,7 @@ Modules.CommandBar = {
         TextBox = nil,
         SuggestionsFrame = nil,
         KeybindConnection = nil,
-        PrefixKey = Enum.KeyCode.Comma,
+        PrefixKey = Enum.KeyCode.Semicolon,
         IsAnimating = false,
         IsEnabled = false
     }
