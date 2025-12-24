@@ -9440,7 +9440,7 @@ end
 function Modules.RemoteInteractor:Initialize()
     RegisterCommand({
         Name = "remotes",
-        Aliases = {"rspy", "remotehub"},
+        Aliases = {"remspy", "remotehub"},
         Description = "Opens a powerful UI to scan, spy on, and fire any remote in the game."
     }, function()
         Modules.RemoteInteractor:Toggle()
@@ -11733,7 +11733,7 @@ Modules.FixCamera = {
 
 RegisterCommand({
     Name = "fixcam",
-    Aliases = {"fix", "unlockcam"},
+    Aliases = {"unlockcam"},
     Description = "Unlocks camera, allows zooming through walls, and forces third-person."
 }, function(args)
     if not LocalPlayer then return end
