@@ -1741,45 +1741,77 @@ end)
 Modules.ESP = {
     State = {
         PlayersEnabled = false,
-        NpcsEnabled = false,
         Connections = {},
-        TrackedPlayers = setmetatable({}, {__mode="k"}),
-        TrackedNpcs = setmetatable({}, {__mode="k"})
+        TrackedPlayers = setmetatable({}, {__mode="k"})
     }
 }
 
 function Modules.ESP:_cleanup()
     for _, conn in pairs(self.State.Connections) do conn:Disconnect() end
-    for _, data in pairs(self.State.TrackedPlayers) do pcall(function() data.Highlight:Destroy() end); pcall(function() data.Billboard:Destroy() end) end
-    for _, data in pairs(self.State.TrackedNpcs) do pcall(function() data.Highlight:Destroy() end); pcall(function() data.Billboard:Destroy() end) end
+    for _, data in pairs(self.State.TrackedPlayers) do
+        pcall(function() data.Highlight:Destroy() end)
+        pcall(function() data.Billboard:Destroy() end)
+    end
     table.clear(self.State.Connections)
     table.clear(self.State.TrackedPlayers)
-    table.clear(self.State.TrackedNpcs)
 end
 
 function Modules.ESP:_createPlayerEsp(player)
     if player == LocalPlayer or self.State.TrackedPlayers[player] then return end
+
     local function setupVisuals(character)
-        if self.State.TrackedPlayers[player] then self.State.TrackedPlayers[player].Highlight:Destroy(); self.State.TrackedPlayers[player].Billboard:Destroy() end
+        if self.State.TrackedPlayers[player] then
+            pcall(function() self.State.TrackedPlayers[player].Highlight:Destroy() end)
+            pcall(function() self.State.TrackedPlayers[player].Billboard:Destroy() end)
+        end
+
         local head = character:WaitForChild("Head", 2)
         if not head then return end
+
         local highlight = Instance.new("Highlight", character)
-        highlight.FillColor, highlight.OutlineColor = Color3.fromRGB(255, 60, 60), Color3.fromRGB(255, 255, 255)
-        highlight.FillTransparency, highlight.OutlineTransparency = 0.8, 0.3
+        highlight.FillColor = Color3.fromRGB(255, 60, 60)
+        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+        highlight.FillTransparency = 0.8
+        highlight.OutlineTransparency = 0.3
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+
         local billboard = Instance.new("BillboardGui", head)
-        billboard.Adornee, billboard.AlwaysOnTop, billboard.Size = head, true, UDim2.new(0, 200, 0, 50)
+        billboard.Adornee = head
+        billboard.AlwaysOnTop = true
+        billboard.Size = UDim2.new(0, 175, 0, 50)
         billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+        
+        local listLayout = Instance.new("UIListLayout", billboard)
+        listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        listLayout.Padding = UDim.new(0, -2)
+
         local nameLabel = Instance.new("TextLabel", billboard)
-        nameLabel.Size, nameLabel.Text, nameLabel.BackgroundTransparency = UDim2.new(1, 0, 0.5, 0), player.Name, 1
-        nameLabel.Font, nameLabel.TextSize, nameLabel.TextColor3 = Enum.Font.Code, 18, Color3.fromRGB(255, 255, 255)
+        nameLabel.Size = UDim2.new(1, 0, 0.5, 0)
+        nameLabel.Text = player.Name
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.Font = Enum.Font.Code
+        nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        nameLabel.TextScaled = true
+        
+        local nameStroke = Instance.new("UIStroke", nameLabel)
+        nameStroke.Color = Color3.new(0,0,0)
+        nameStroke.Thickness = 1.25
+
         local teamLabel = Instance.new("TextLabel", billboard)
-        teamLabel.Size, teamLabel.Position, teamLabel.BackgroundTransparency = UDim2.new(1, 0, 0.5, 0), UDim2.new(0, 0, 0.5, 0), 1
-        teamLabel.Font, teamLabel.TextSize = Enum.Font.Code, 14
+        teamLabel.Size = UDim2.new(1, 0, 0.5, 0)
+        teamLabel.BackgroundTransparency = 1
+        teamLabel.Font = Enum.Font.Code
+        teamLabel.TextScaled = true
         teamLabel.Text = player.Team and player.Team.Name or "No Team"
         teamLabel.TextColor3 = player.Team and player.Team.TeamColor.Color or Color3.fromRGB(200, 200, 200)
+
+        local teamStroke = Instance.new("UIStroke", teamLabel)
+        teamStroke.Color = Color3.new(0,0,0)
+        teamStroke.Thickness = 1.25
+
         self.State.TrackedPlayers[player] = { Highlight = highlight, Billboard = billboard, CharacterAddedConn = nil }
     end
+
     if player.Character then setupVisuals(player.Character) end
     local conn = player.CharacterAdded:Connect(setupVisuals)
     if self.State.TrackedPlayers[player] then self.State.TrackedPlayers[player].CharacterAddedConn = conn end
@@ -1793,53 +1825,10 @@ function Modules.ESP:_removePlayerEsp(player)
     self.State.TrackedPlayers[player] = nil
 end
 
-function Modules.ESP:_onHeartbeat()
-    if not self.State.NpcsEnabled then return end
-    
-    local myRoot = LocalPlayer.Character and LocalPlayer.Character.PrimaryPart
-    
-    -- Update existing NPCs, remove dead/gone ones
-    for model, data in pairs(self.State.TrackedNpcs) do
-        if not model.Parent or data.Humanoid.Health <= 0 then
-            pcall(function() data.Highlight:Destroy() end)
-            pcall(function() data.Billboard:Destroy() end)
-            self.State.TrackedNpcs[model] = nil
-        elseif myRoot and data.InfoLabel then
-            local dist = math.floor((myRoot.Position - data.RootPart.Position).Magnitude)
-            data.InfoLabel.Text = string.format("HP: %.0f | Dist: %dm", data.Humanoid.Health, dist)
-        end
-    end
-    
-    -- Scan for new NPCs
-    for _, model in ipairs(Workspace:GetChildren()) do
-        if model:IsA("Model") and not self.State.TrackedNpcs[model] then
-            if not Players:GetPlayerFromCharacter(model) then
-                local humanoid = model:FindFirstChildOfClass("Humanoid")
-                local rootPart = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart")
-                if humanoid and rootPart and humanoid.Health > 0 then
-                    local highlight = Instance.new("Highlight", model)
-                    highlight.FillColor, highlight.OutlineColor = Color3.fromRGB(255, 255, 0), Color3.fromRGB(0, 0, 0)
-                    highlight.FillTransparency, highlight.OutlineTransparency = 0.7, 0.4
-                    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    local billboard = Instance.new("BillboardGui", rootPart)
-                    billboard.Adornee, billboard.AlwaysOnTop, billboard.Size = rootPart, true, UDim2.fromOffset(150, 40)
-                    billboard.StudsOffset = Vector3.new(0, 2, 0)
-                    local nameLabel = Instance.new("TextLabel", billboard)
-                    nameLabel.Size, nameLabel.Text, nameLabel.Font, nameLabel.TextSize, nameLabel.TextColor3, nameLabel.BackgroundTransparency = UDim2.new(1, 0, 0.5, 0), model.Name, Enum.Font.Code, 16, Color3.fromRGB(255, 255, 255), 1
-                    local infoLabel = Instance.new("TextLabel", billboard)
-                    infoLabel.Size, infoLabel.Position, infoLabel.Font, infoLabel.TextSize, infoLabel.TextColor3, infoLabel.BackgroundTransparency = UDim2.new(1, 0, 0.5, 0), UDim2.new(0, 0, 0.5, 0), Enum.Font.Code, 14, Color3.fromRGB(200, 200, 200), 1
-                    self.State.TrackedNpcs[model] = { Highlight = highlight, Billboard = billboard, Humanoid = humanoid, RootPart = rootPart, InfoLabel = infoLabel }
-                end
-            end
-        end
-    end
-end
-
 function Modules.ESP:Toggle(argument)
     argument = (argument or "players"):lower()
 
-    if argument == "players" or argument == "p" then
-        -- This block is for toggling ESP for ALL players (original functionality)
+    if argument == "players" or argument == "p" or argument == "all" then
         self.State.PlayersEnabled = not self.State.PlayersEnabled
         DoNotif("Player ESP: " .. (self.State.PlayersEnabled and "ENABLED" or "DISABLED"), 2)
         if self.State.PlayersEnabled then
@@ -1851,49 +1840,26 @@ function Modules.ESP:Toggle(argument)
             if self.State.Connections.PlayerRemoving then self.State.Connections.PlayerRemoving:Disconnect(); self.State.Connections.PlayerRemoving = nil end
             for player, _ in pairs(self.State.TrackedPlayers) do self:_removePlayerEsp(player) end
         end
-    elseif argument == "npcs" or argument == "npc" or argument == "ai" then
-        -- This block is for toggling ESP for NPCs (original functionality)
-        self.State.NpcsEnabled = not self.State.NpcsEnabled
-        DoNotif("NPC ESP: " .. (self.State.NpcsEnabled and "ENABLED" or "DISABLED"), 2)
-        if not self.State.NpcsEnabled then
-            for model, _ in pairs(self.State.TrackedNpcs) do
-                pcall(function() self.State.TrackedNpcs[model].Highlight:Destroy() end)
-                pcall(function() self.State.TrackedNpcs[model].Billboard:Destroy() end)
-                self.State.TrackedNpcs[model] = nil
-            end
-        end
     else
-        -- [NEW] This block handles targeting a SINGLE player.
         local targetPlayer = Utilities.findPlayer(argument)
         if not targetPlayer then
             return DoNotif("Player '" .. argument .. "' not found.", 3)
         end
 
-        -- Check if we are already tracking this specific player to toggle them off.
         if self.State.TrackedPlayers[targetPlayer] then
             self:_removePlayerEsp(targetPlayer)
             DoNotif("ESP for " .. targetPlayer.Name .. ": DISABLED", 2)
         else
-            -- Otherwise, create ESP for just this player.
             self:_createPlayerEsp(targetPlayer)
             DoNotif("ESP for " .. targetPlayer.Name .. ": ENABLED", 2)
         end
-    end
-
-    -- Manage the master Heartbeat connection (no changes needed here)
-    local isAnyEspActive = self.State.PlayersEnabled or self.State.NpcsEnabled or next(self.State.TrackedPlayers)
-    if isAnyEspActive and not self.State.Connections.Heartbeat then
-        self.State.Connections.Heartbeat = RunService.Heartbeat:Connect(function() self:_onHeartbeat() end)
-    elseif not isAnyEspActive and self.State.Connections.Heartbeat then
-        self.State.Connections.Heartbeat:Disconnect()
-        self.State.Connections.Heartbeat = nil
     end
 end
 
 RegisterCommand({
     Name = "esp",
     Aliases = {},
-    Description = "Toggles ESP."
+    Description = "Toggles ESP for all players or a specific player."
 }, function(args)
     Modules.ESP:Toggle(args[1])
 end)
