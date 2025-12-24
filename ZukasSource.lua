@@ -4208,73 +4208,122 @@ end
 end)
 end
 Modules.TriggerRemoteTouch = {
-State = {
-IsExecuting = false
+    State = {
+        IsExecuting = false,
+        FoundParts = {}
+    },
+    Services = {
+        Players = game:GetService("Players"),
+        Workspace = game:GetService("Workspace"),
+        RunService = game:GetService("RunService")
+    }
 }
-}
-function Modules.TriggerRemoteTouch:_findPartFromPath(path)
-    local current = Workspace
-    for partName in path:gmatch("([^/]+)") do
-        local found = nil
-        for _, child in ipairs(current:GetChildren()) do
-            if child.Name:lower() == partName:lower() then
-                found = child
-                break
-            end
-        end
-        if not found then return nil end
-            current = found
-        end
-        return current:IsA("BasePart") and current or nil
+
+function Modules.TriggerRemoteTouch:_triggerPart(targetPart)
+    if not targetPart then return end
+
+    local hrp = self.Services.Players.LocalPlayer.Character and self.Services.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    DoNotif("Triggering: " .. targetPart:GetFullName(), 1)
+
+    if firetouchinterest then
+        pcall(function()
+            firetouchinterest(hrp, targetPart, 0)
+            self.Services.RunService.Heartbeat:Wait()
+            firetouchinterest(hrp, targetPart, 1)
+        end)
+    else
+        warn("TriggerRemoteTouch: 'firetouchinterest' not found. Using CFrame fallback.")
+        local originalCFrame = hrp.CFrame
+        pcall(function()
+            hrp.CFrame = targetPart.CFrame
+            self.Services.RunService.Heartbeat:Wait()
+            hrp.CFrame = originalCFrame
+        end)
     end
-    function Modules.TriggerRemoteTouch:Execute(targetPath)
-        local self = Modules.TriggerRemoteTouch
-        if self.State.IsExecuting then return DoNotif("A remote touch is already in progress.", 1) end
-            if not targetPath then return DoNotif("Usage: ;touchpart [path/to/part]", 3) end
-                local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if not hrp then return DoNotif("Cannot trigger: Your character's HumanoidRootPart was not found.", 3) end
-                    local targetPart = self:_findPartFromPath(targetPath)
-                    if not targetPart then return DoNotif("Could not find a valid part at path: " .. targetPath, 3) end
-                        self.State.IsExecuting = true
-                        DoNotif("Attempting to trigger touch on: " .. targetPart:GetFullName(), 1.5)
-                        if firetouchinterest then
-                            pcall(function()
-                            firetouchinterest(hrp, targetPart, 0)
-                            RunService.Heartbeat:Wait()
-                            firetouchinterest(hrp, targetPart, 1)
-                            DoNotif("Successfully triggered touch via firetouchinterest.", 2)
-                        end)
-                    else
-                    warn("Zuka's Warning: 'firetouchinterest' not found. Using CFrame fallback method for TriggerRemoteTouch.")
-                    coroutine.wrap(function()
-                    local originalCFrame = hrp.CFrame
-                    local success, err = pcall(function()
-                    hrp.CFrame = targetPart.CFrame
-                    RunService.Heartbeat:Wait()
-                    hrp.CFrame = originalCFrame
-                end)
-                if success then
-                    DoNotif("Successfully triggered touch via CFrame method.", 2)
-                else
-                hrp.CFrame = originalCFrame
-                DoNotif("CFrame method failed. The target part may be invalid.", 3)
-                warn("TriggerRemoteTouch Error:", err)
-            end
-        end)()
-    end
-    task.wait(0.2)
-    self.State.IsExecuting = false
 end
+
+function Modules.TriggerRemoteTouch:Scan()
+    if self.State.IsExecuting then return DoNotif("An operation is already in progress.", 2) end
+    self.State.IsExecuting = true
+
+    DoNotif("Scanning for all touch-interactive parts...", 3)
+    
+    task.spawn(function()
+        table.clear(self.State.FoundParts)
+        local count = 0
+        for i, descendant in ipairs(self.Services.Workspace:GetDescendants()) do
+            if descendant:IsA("TouchInterest") then
+                local part = descendant.Parent
+                if part and part:IsA("BasePart") then
+                    table.insert(self.State.FoundParts, part)
+                    count = count + 1
+                end
+            end
+            if i % 200 == 0 then task.wait() end
+        end
+        DoNotif("Scan complete. Found " .. count .. " interactive parts.", 3)
+        self.State.IsExecuting = false
+    end)
+end
+
+function Modules.TriggerRemoteTouch:TriggerAll()
+    if self.State.IsExecuting then return DoNotif("An operation is already in progress.", 2) end
+    if #self.State.FoundParts == 0 then
+        return DoNotif("No parts found. Run ';touch scan' first.", 3)
+    end
+    self.State.IsExecuting = true
+
+    DoNotif("Beginning sequence to trigger all " .. #self.State.FoundParts .. " parts.", 3)
+
+    task.spawn(function()
+        for _, part in ipairs(self.State.FoundParts) do
+            if not self.State.IsExecuting then break end
+            self:_triggerPart(part)
+            task.wait(0.5)
+        end
+        DoNotif("Trigger sequence finished.", 2)
+        self.State.IsExecuting = false
+    end)
+end
+
+function Modules.TriggerRemoteTouch:TriggerSingle(keyword)
+    if not keyword then return DoNotif("Usage: ;touch single <keyword>", 3) end
+    if self.State.IsExecuting then return DoNotif("An operation is already in progress.", 2) end
+    if #self.State.FoundParts == 0 then
+        return DoNotif("No parts found. Run ';touch scan' first.", 3)
+    end
+
+    local lowerKeyword = keyword:lower()
+    for _, part in ipairs(self.State.FoundParts) do
+        if part:GetFullName():lower():find(lowerKeyword, 1, true) then
+            self:_triggerPart(part)
+            return
+        end
+    end
+
+    DoNotif("No scanned part found matching '" .. keyword .. "'.", 3)
+end
+
 function Modules.TriggerRemoteTouch:Initialize()
     local module = self
     RegisterCommand({
-    Name = "touchpart",
-    Aliases = {"trigger", "touch"},
-    Description = "Remotely triggers the .Touched event on a part."
+        Name = "touch",
+        Aliases = {"remotetouch", "trigger"},
+        Description = "Scans and triggers touch-interest parts."
     }, function(args)
-    local path = table.concat(args, "/")
-    module:Execute(path)
-end)
+        local subCommand = args[1] and args[1]:lower()
+        if subCommand == "scan" then
+            module:Scan()
+        elseif subCommand == "all" then
+            module:TriggerAll()
+        elseif subCommand == "single" then
+            module:TriggerSingle(args[2])
+        else
+            DoNotif("Usage: ;touch <scan|all|single> [keyword]", 4)
+        end
+    end)
 end
 Modules.ScriptHunter = {
     State = {
@@ -9129,95 +9178,279 @@ end)
 
 Modules.RemoteInteractor = {
     State = {
-        IsExecuting = false
+        IsEnabled = false,
+        UI = nil,
+        SelectedRemote = nil,
+        OriginalNamecall = nil
     },
     Services = {
-        Players = game:GetService("Players"),
-        Workspace = game:GetService("Workspace"),
+        CoreGui = game:GetService("CoreGui"),
+        UserInputService = game:GetService("UserInputService"),
+        TweenService = game:GetService("TweenService"),
         RunService = game:GetService("RunService")
     }
 }
 
---// --- Public Method ---
-
-function Modules.RemoteInteractor:Execute()
-    if self.State.IsExecuting then
-        return DoNotif("Remote interaction is already in progress.", 2)
-    end
-
-    self.State.IsExecuting = true
-    DoNotif("Scanning workspace for all interactive objects...", 3)
-
-    -- Run the entire operation in a separate thread to prevent the game from freezing.
-    task.spawn(function()
-        local localPlayer = self.Services.Players.LocalPlayer
-        local character = localPlayer.Character
-        local hrp = character and character:FindFirstChild("HumanoidRootPart")
-        if not hrp then
-            DoNotif("Cannot execute: Character's HumanoidRootPart not found.", 3)
-            self.State.IsExecuting = false
-            return
-        end
-
-        local originalCFrame = hrp.CFrame
-        local promptsFired = 0
-        local detectorsTriggered = 0
-        local allInteractiveObjects = self.Services.Workspace:GetDescendants()
-
-        --// --- Phase 1: Fire all ProximityPrompts (Clean Method) ---
-        if fireproximityprompt then
-            for _, instance in ipairs(allInteractiveObjects) do
-                if instance:IsA("ProximityPrompt") then
-                    local success, err = pcall(fireproximityprompt, instance)
-                    if success then
-                        promptsFired = promptsFired + 1
-                    end
-                end
-            end
-        else
-             warn("[RemoteInteractor] 'fireproximityprompt' is not available in this environment. Skipping ProximityPrompt phase.")
-        end
-        
-        -- A small delay to allow the engine to process the fired prompts.
-        task.wait()
-
-        --// --- Phase 2: Trigger all ClickDetectors (Teleport Method) ---
-        local detectorsToTrigger = {}
-        for _, instance in ipairs(allInteractiveObjects) do
-            if instance:IsA("ClickDetector") then
-                table.insert(detectorsToTrigger, instance)
-            end
-        end
-
-        if #detectorsToTrigger > 0 then
-            DoNotif("Found " .. #detectorsToTrigger .. " ClickDetectors. Triggering via teleport...", 2)
-            for _, detector in ipairs(detectorsToTrigger) do
-                local targetPart = detector.Parent
-                if targetPart and targetPart:IsA("BasePart") then
-                    -- Teleport to the part, wait one frame for the server to register proximity, then continue.
-                    hrp.CFrame = targetPart.CFrame
-                    self.Services.RunService.Heartbeat:Wait()
-                    detectorsTriggered = detectorsTriggered + 1
-                end
-            end
-
-            -- After iterating through all detectors, return to the original position.
-            hrp.CFrame = originalCFrame
-        end
-
-        DoNotif(string.format("Interaction complete. Fired %d prompts and triggered %d detectors.", promptsFired, detectorsTriggered), 4)
-        self.State.IsExecuting = false
-    end)
+function Modules.RemoteInteractor:_destroyUI()
+    if not self.State.UI then return end
+    self.State.UI.ScreenGui:Destroy()
+    self.State.UI = nil
 end
 
---// --- Command Registration ---
-RegisterCommand({
-    Name = "triggerall",
-    Aliases = {"clickall", "fireclicks"},
-    Description = "Scans and remotely fires all ClickDetectors and ProximityPrompts in the game."
-}, function()
-    Modules.RemoteInteractor:Execute()
-end)
+function Modules.RemoteInteractor:_createUI()
+    self:_destroyUI()
+    self.State.UI = {}
+    local ui = self.State.UI
+
+    ui.ScreenGui = Instance.new("ScreenGui")
+    ui.ScreenGui.Name = "RemoteInteractor_Zuka"
+    ui.ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    ui.ScreenGui.ResetOnSpawn = false
+
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.fromOffset(600, 400)
+    mainFrame.Position = UDim2.fromScale(0.5, 0.5)
+    mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(34, 32, 38)
+    mainFrame.Draggable = true
+    mainFrame.Active = true
+    mainFrame.Parent = ui.ScreenGui
+    Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 6)
+    Instance.new("UIStroke", mainFrame).Color = Color3.fromRGB(0, 255, 255)
+
+    local title = Instance.new("TextLabel", mainFrame)
+    title.Size = UDim2.new(1, 0, 0, 30)
+    title.BackgroundColor3 = Color3.fromRGB(24, 22, 28)
+    title.Text = "Remote Interactor"
+    title.Font = Enum.Font.GothamSemibold
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextSize = 16
+
+    local closeButton = Instance.new("TextButton", title)
+    closeButton.Size = UDim2.fromOffset(30, 30)
+    closeButton.Position = UDim2.new(1, 0, 0, 0)
+    closeButton.AnchorPoint = Vector2.new(1, 0)
+    closeButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    closeButton.Text = "X"
+    closeButton.Font = Enum.Font.GothamBold
+    closeButton.TextColor3 = Color3.new(1, 1, 1)
+
+    local leftPanel = Instance.new("Frame", mainFrame)
+    leftPanel.Size = UDim2.new(0.4, 0, 1, -30)
+    leftPanel.Position = UDim2.fromOffset(0, 30)
+    leftPanel.BackgroundTransparency = 1
+
+    local scanButton = Instance.new("TextButton", leftPanel)
+    scanButton.Size = UDim2.new(1, 0, 0, 30)
+    scanButton.BackgroundColor3 = Color3.fromRGB(0, 150, 150)
+    scanButton.Text = "Scan for Remotes"
+    scanButton.Font = Enum.Font.GothamBold
+    scanButton.TextColor3 = Color3.new(1, 1, 1)
+
+    ui.RemoteList = Instance.new("ScrollingFrame", leftPanel)
+    ui.RemoteList.Size = UDim2.new(1, 0, 1, -35)
+    ui.RemoteList.Position = UDim2.fromOffset(0, 35)
+    ui.RemoteList.BackgroundColor3 = Color3.fromRGB(24, 22, 28)
+    ui.RemoteList.BorderSizePixel = 0
+    Instance.new("UIListLayout", ui.RemoteList).Padding = UDim.new(0, 2)
+
+    local rightPanel = Instance.new("Frame", mainFrame)
+    rightPanel.Size = UDim2.new(0.6, 0, 1, -30)
+    rightPanel.Position = UDim2.new(0.4, 0, 0, 30)
+    rightPanel.BackgroundTransparency = 1
+    Instance.new("UIPadding", rightPanel).PaddingLeft = UDim.new(0, 10)
+
+    ui.SelectedRemoteLabel = Instance.new("TextLabel", rightPanel)
+    ui.SelectedRemoteLabel.Size = UDim2.new(1, -20, 0, 40)
+    ui.SelectedRemoteLabel.BackgroundTransparency = 1
+    ui.SelectedRemoteLabel.Font = Enum.Font.Code
+    ui.SelectedRemoteLabel.Text = "Select a remote from the list"
+    ui.SelectedRemoteLabel.TextColor3 = Color3.new(1, 1, 1)
+    ui.SelectedRemoteLabel.TextWrapped = true
+    ui.SelectedRemoteLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+    ui.ArgsFrame = Instance.new("ScrollingFrame", rightPanel)
+    ui.ArgsFrame.Size = UDim2.new(1, -20, 0.4, 0)
+    ui.ArgsFrame.Position = UDim2.fromOffset(0, 40)
+    ui.ArgsFrame.BackgroundColor3 = Color3.fromRGB(24, 22, 28)
+    ui.ArgsFrame.BorderSizePixel = 0
+    Instance.new("UIListLayout", ui.ArgsFrame).Padding = UDim.new(0, 5)
+
+    local addArgButton = Instance.new("TextButton", rightPanel)
+    addArgButton.Size = UDim2.new(0.5, 0, 0, 25)
+    addArgButton.Position = UDim2.new(0, 0, 0.4, 45)
+    addArgButton.BackgroundColor3 = Color3.fromRGB(80, 80, 100)
+    addArgButton.Text = "+ Add Argument"
+    addArgButton.Font = Enum.Font.Gotham
+    addArgButton.TextColor3 = Color3.new(1, 1, 1)
+
+    local fireButton = Instance.new("TextButton", rightPanel)
+    fireButton.Size = UDim2.new(0.5, -15, 0, 30)
+    fireButton.Position = UDim2.new(0, 0, 1, -75)
+    fireButton.BackgroundColor3 = Color3.fromRGB(50, 180, 50)
+    fireButton.Text = "FireServer"
+    fireButton.Font = Enum.Font.GothamBold
+    fireButton.TextColor3 = Color3.new(1, 1, 1)
+
+    local invokeButton = fireButton:Clone()
+    invokeButton.Position = UDim2.new(0.5, 5, 1, -75)
+    invokeButton.Text = "InvokeServer"
+    invokeButton.BackgroundColor3 = Color3.fromRGB(50, 100, 180)
+    invokeButton.Parent = rightPanel
+
+    ui.ResultsBox = Instance.new("TextBox", rightPanel)
+    ui.ResultsBox.MultiLine = true
+    ui.ResultsBox.TextEditable = false
+    ui.ResultsBox.Size = UDim2.new(1, -20, 0.2, 0)
+    ui.ResultsBox.Position = UDim2.new(0, 0, 1, -40)
+    ui.ResultsBox.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    ui.ResultsBox.Font = Enum.Font.Code
+    ui.ResultsBox.TextColor3 = Color3.fromRGB(0, 255, 0)
+    ui.ResultsBox.PlaceholderText = "Invoke results will appear here..."
+
+    ui.ScreenGui.Parent = self.Services.CoreGui
+    
+    closeButton.MouseButton1Click:Connect(function() self:Toggle() end)
+    scanButton.MouseButton1Click:Connect(function() self:_scanRemotes() end)
+    addArgButton.MouseButton1Click:Connect(function() self:_addArgumentInput() end)
+    fireButton.MouseButton1Click:Connect(function() self:_fireRemote(false) end)
+    invokeButton.MouseButton1Click:Connect(function() self:_fireRemote(true) end)
+end
+
+function Modules.RemoteInteractor:_scanRemotes()
+    for _, v in ipairs(self.State.UI.RemoteList:GetChildren()) do
+        if v:IsA("TextButton") then v:Destroy() end
+    end
+    for _, v in ipairs(game:GetDescendants()) do
+        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(1, 0, 0, 22)
+            btn.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+            btn.TextColor3 = Color3.new(1, 1, 1)
+            btn.Text = v.Name .. " (" .. v.ClassName .. ")"
+            btn.Font = Enum.Font.Code
+            btn.Parent = self.State.UI.RemoteList
+            btn.MouseButton1Click:Connect(function() self:_selectRemote(v) end)
+        end
+    end
+end
+
+function Modules.RemoteInteractor:_selectRemote(remote)
+    self.State.SelectedRemote = remote
+    self.State.UI.SelectedRemoteLabel.Text = remote:GetFullName()
+    for _, v in ipairs(self.State.UI.ArgsFrame:GetChildren()) do
+        if v:IsA("Frame") then v:Destroy() end
+    end
+    self:_addArgumentInput()
+end
+
+function Modules.RemoteInteractor:_addArgumentInput(value)
+    local row = Instance.new("Frame", self.State.UI.ArgsFrame)
+    row.Size = UDim2.new(1, 0, 0, 25)
+    row.BackgroundTransparency = 1
+    local input = Instance.new("TextBox", row)
+    input.Size = UDim2.new(1, -25, 1, 0)
+    input.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    input.TextColor3 = Color3.new(1, 1, 1)
+    input.Font = Enum.Font.Code
+    input.Text = tostring(value or "")
+    local delBtn = Instance.new("TextButton", row)
+    delBtn.Size = UDim2.fromOffset(20, 20)
+    delBtn.Position = UDim2.new(1, -20, 0, 2.5)
+    delBtn.BackgroundColor3 = Color3.fromRGB(150, 40, 40)
+    delBtn.Text = "X"
+    delBtn.Font = Enum.Font.Code
+    delBtn.TextColor3 = Color3.new(1, 1, 1)
+    delBtn.MouseButton1Click:Connect(function() row:Destroy() end)
+end
+
+function Modules.RemoteInteractor:_fireRemote(isInvoke)
+    if not self.State.SelectedRemote then return end
+    
+    local args = {}
+    for _, row in ipairs(self.State.UI.ArgsFrame:GetChildren()) do
+        if row:IsA("Frame") then
+            local input = row:FindFirstChildOfClass("TextBox")
+            local text = input.Text
+            if tonumber(text) then
+                table.insert(args, tonumber(text))
+            elseif text:lower() == "true" then
+                table.insert(args, true)
+            elseif text:lower() == "false" then
+                table.insert(args, false)
+            elseif text:lower() == "nil" then
+                table.insert(args, nil)
+            else
+                table.insert(args, text)
+            end
+        end
+    end
+    
+    if isInvoke then
+        local success, result = pcall(self.State.SelectedRemote.InvokeServer, self.State.SelectedRemote, unpack(args))
+        if success then
+            self.State.UI.ResultsBox.Text = "SUCCESS: " .. tostring(result)
+        else
+            self.State.UI.ResultsBox.Text = "ERROR: " .. tostring(result)
+        end
+    else
+        pcall(self.State.SelectedRemote.FireServer, self.State.SelectedRemote, unpack(args))
+        self.State.UI.ResultsBox.Text = "Fired remote event. (No return value)"
+    end
+end
+
+function Modules.RemoteInteractor:_setupNamecallHook()
+    if not (getrawmetatable and getnamecallmethod) then return end
+    local mt = getrawmetatable(game)
+    self.State.OriginalNamecall = mt.__namecall
+    setreadonly(mt, false)
+    mt.__namecall = function(...)
+        local method = getnamecallmethod()
+        local selfArg = select(1, ...)
+        if self.State.SelectedRemote and selfArg == self.State.SelectedRemote and (method == "FireServer" or method == "InvokeServer") then
+            for _, v in ipairs(self.State.UI.ArgsFrame:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
+            local args = {...}
+            for i = 2, #args do
+                self:_addArgumentInput(args[i])
+            end
+        end
+        return self.State.OriginalNamecall(...)
+    end
+    setreadonly(mt, true)
+end
+
+function Modules.RemoteInteractor:_removeNamecallHook()
+    if not self.State.OriginalNamecall then return end
+    pcall(function()
+        local mt = getrawmetatable(game)
+        setreadonly(mt, false)
+        mt.__namecall = self.State.OriginalNamecall
+        setreadonly(mt, true)
+    end)
+    self.State.OriginalNamecall = nil
+end
+
+function Modules.RemoteInteractor:Toggle()
+    self.State.IsEnabled = not self.State.IsEnabled
+    if self.State.IsEnabled then
+        self:_createUI()
+        self:_setupNamecallHook()
+    else
+        self:_destroyUI()
+        self:_removeNamecallHook()
+    end
+end
+
+function Modules.RemoteInteractor:Initialize()
+    RegisterCommand({
+        Name = "remotes",
+        Aliases = {"rspy", "remotehub"},
+        Description = "Opens a powerful UI to scan, spy on, and fire any remote in the game."
+    }, function()
+        Modules.RemoteInteractor:Toggle()
+    end)
+end
 
 Modules.InstantRespawn = {
     State = {
@@ -11553,6 +11786,414 @@ RegisterCommand({
     end
 end)
 
+Modules.NoFog = {
+    State = {
+        IsEnabled = false,
+        OriginalProperties = {}
+    },
+    Services = {
+        Lighting = game:GetService("Lighting")
+    }
+}
+
+function Modules.NoFog:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+
+    self.State.OriginalProperties.FogEnd = self.Services.Lighting.FogEnd
+    self.State.OriginalProperties.FogStart = self.Services.Lighting.FogStart
+
+    local atmosphere = self.Services.Lighting:FindFirstChildOfClass("Atmosphere")
+    if atmosphere then
+        self.State.OriginalProperties.AtmosphereEnabled = atmosphere.Enabled
+        atmosphere.Enabled = false
+    end
+
+    self.Services.Lighting.FogEnd = 1000000
+    self.Services.Lighting.FogStart = 0
+    
+    DoNotif("No Fog: ENABLED.", 2)
+end
+
+function Modules.NoFog:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+
+    if self.State.OriginalProperties.FogEnd then
+        self.Services.Lighting.FogEnd = self.State.OriginalProperties.FogEnd
+    end
+    if self.State.OriginalProperties.FogStart then
+        self.Services.Lighting.FogStart = self.State.OriginalProperties.FogStart
+    end
+
+    local atmosphere = self.Services.Lighting:FindFirstChildOfClass("Atmosphere")
+    if atmosphere and self.State.OriginalProperties.AtmosphereEnabled ~= nil then
+        atmosphere.Enabled = self.State.OriginalProperties.AtmosphereEnabled
+    end
+
+    self.State.OriginalProperties = {}
+    DoNotif("No Fog: DISABLED.", 2)
+end
+
+function Modules.NoFog:Toggle()
+    if self.State.IsEnabled then
+        self:Disable()
+    else
+        self:Enable()
+    end
+end
+
+RegisterCommand({
+    Name = "nofog",
+    Aliases = {"removefog", "antifog"},
+    Description = "Toggles client-sided fog."
+}, function()
+    Modules.NoFog:Toggle()
+end)
+
+Modules.Waypoint = {
+    State = {
+        Waypoints = {},
+        Visuals = {}
+    },
+    Services = {
+        Players = game:GetService("Players"),
+        Workspace = game:GetService("Workspace"),
+        CoreGui = game:GetService("CoreGui")
+    }
+}
+
+function Modules.Waypoint:_cleanupVisual(name)
+    local visual = self.State.Visuals[name:lower()]
+    if visual then
+        pcall(function()
+            visual:Destroy()
+        end)
+        self.State.Visuals[name:lower()] = nil
+    end
+end
+
+function Modules.Waypoint:_createVisual(name, cframe)
+    self:_cleanupVisual(name)
+
+    local container = Instance.new("Part")
+    container.Name = "WaypointVisual_" .. name
+    container.Size = Vector3.new(0.1, 0.1, 0.1)
+    container.CFrame = cframe
+    container.Anchored = true
+    container.CanCollide = false
+    container.Transparency = 1
+    container.Parent = self.Services.Workspace
+
+    local billboard = Instance.new("BillboardGui", container)
+    billboard.AlwaysOnTop = true
+    billboard.Size = UDim2.fromOffset(200, 50)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+
+    local label = Instance.new("TextLabel", billboard)
+    label.Size = UDim2.fromScale(1, 1)
+    label.BackgroundTransparency = 1
+    label.Font = Enum.Font.GothamSemibold
+    label.Text = name
+    label.TextColor3 = Color3.fromRGB(0, 255, 255)
+    label.TextSize = 24
+    label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    label.TextStrokeTransparency = 0.5
+
+    local attachment1 = Instance.new("Attachment", container)
+    local attachment2 = Instance.new("Attachment", container)
+    attachment2.Position = Vector3.new(0, 1000, 0)
+
+    local beam = Instance.new("Beam", container)
+    beam.Attachment0 = attachment1
+    beam.Attachment1 = attachment2
+    beam.Color = ColorSequence.new(Color3.fromRGB(0, 255, 255))
+    beam.FaceCamera = true
+    beam.LightEmission = 1
+    beam.Width0 = 2
+    beam.Width1 = 0
+    beam.Transparency = NumberSequence.new(0.25)
+
+    self.State.Visuals[name:lower()] = container
+end
+
+function Modules.Waypoint:Add(name)
+    if not name or name == "" then
+        return DoNotif("You must provide a name for the waypoint.", 3)
+    end
+    local character = self.Services.Players.LocalPlayer.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        return DoNotif("Cannot set waypoint: Character not found.", 3)
+    end
+    local key = name:lower()
+    self.State.Waypoints[key] = hrp.CFrame
+    self:_createVisual(name, hrp.CFrame)
+    DoNotif("Waypoint '" .. name .. "' created at your position.", 2)
+end
+
+function Modules.Waypoint:Remove(name)
+    if not name or name == "" then
+        return DoNotif("You must provide a name to remove.", 3)
+    end
+    local key = name:lower()
+    if not self.State.Waypoints[key] then
+        return DoNotif("Waypoint '" .. name .. "' does not exist.", 3)
+    end
+    self.State.Waypoints[key] = nil
+    self:_cleanupVisual(name)
+    DoNotif("Waypoint '" .. name .. "' removed.", 2)
+end
+
+function Modules.Waypoint:Teleport(name)
+    if not name or name == "" then
+        return DoNotif("You must provide a name to teleport to.", 3)
+    end
+    local key = name:lower()
+    local targetCFrame = self.State.Waypoints[key]
+    if not targetCFrame then
+        return DoNotif("Waypoint '" .. name .. "' does not exist.", 3)
+    end
+    local character = self.Services.Players.LocalPlayer.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        return DoNotif("Cannot teleport: Character not found.", 3)
+    end
+    hrp.CFrame = targetCFrame + Vector3.new(0, 3, 0)
+    DoNotif("Teleported to '" .. name .. "'.", 2)
+end
+
+function Modules.Waypoint:List()
+    local waypointNames = {}
+    for name in pairs(self.State.Waypoints) do
+        table.insert(waypointNames, name)
+    end
+    if #waypointNames == 0 then
+        return DoNotif("No waypoints have been set.", 3)
+    end
+    local message = "Waypoints: " .. table.concat(waypointNames, ", ")
+    DoNotif(message, 5)
+end
+
+function Modules.Waypoint:Clear()
+    for name in pairs(self.State.Waypoints) do
+        self:_cleanupVisual(name)
+    end
+    self.State.Waypoints = {}
+    DoNotif("All waypoints cleared.", 2)
+end
+
+RegisterCommand({
+    Name = "waypoint",
+    Aliases = {"wp"},
+    Description = "Manages waypoints."
+}, function(args)
+    local subCommand = args[1] and args[1]:lower()
+    local name = args[2]
+
+    if subCommand == "add" then
+        Modules.Waypoint:Add(name)
+    elseif subCommand == "remove" or subCommand == "del" then
+        Modules.Waypoint:Remove(name)
+    elseif subCommand == "tp" or subCommand == "goto" then
+        Modules.Waypoint:Teleport(name)
+    elseif subCommand == "list" then
+        Modules.Waypoint:List()
+    elseif subCommand == "clear" then
+        Modules.Waypoint:Clear()
+    else
+        DoNotif("Usage: ;wp add,remove,tp,list", 4)
+    end
+end)
+
+Modules.FpsMeter = {
+    State = {
+        IsEnabled = false,
+        UI = {},
+        Connection = nil
+    },
+    Services = {
+        RunService = game:GetService("RunService"),
+        CoreGui = game:GetService("CoreGui")
+    }
+}
+
+function Modules.FpsMeter:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "FpsMeter_Zuka"
+    screenGui.ResetOnSpawn = false
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    screenGui.Parent = self.Services.CoreGui
+    self.State.UI.ScreenGui = screenGui
+
+    local background = Instance.new("Frame", screenGui)
+    background.Size = UDim2.fromOffset(140, 30)
+    background.Position = UDim2.new(1, -150, 0, 10)
+    background.AnchorPoint = Vector2.new(1, 0)
+    background.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+    background.BackgroundTransparency = 0.3
+    
+    local corner = Instance.new("UICorner", background)
+    corner.CornerRadius = UDim.new(0, 4)
+
+    local label = Instance.new("TextLabel", background)
+    label.Size = UDim2.fromScale(1, 1)
+    label.BackgroundTransparency = 1
+    label.Font = Enum.Font.GothamSemibold
+    label.TextColor3 = Color3.fromRGB(0, 255, 127)
+    label.TextSize = 18
+    label.Text = "FPS: ..."
+    self.State.UI.Label = label
+
+    local lastUpdate = 0
+    local updateInterval = 0.25
+
+    self.State.Connection = self.Services.RunService.Heartbeat:Connect(function(deltaTime)
+        local now = os.clock()
+        if now - lastUpdate > updateInterval then
+            local fps = 1 / deltaTime
+            label.Text = string.format("FPS: %.1f", fps)
+            lastUpdate = now
+        end
+    end)
+
+    DoNotif("FPS Meter: ENABLED", 2)
+end
+
+function Modules.FpsMeter:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+
+    if self.State.Connection then
+        self.State.Connection:Disconnect()
+        self.State.Connection = nil
+    end
+
+    if self.State.UI.ScreenGui then
+        self.State.UI.ScreenGui:Destroy()
+    end
+    
+    self.State.UI = {}
+
+    DoNotif("FPS Meter: DISABLED", 2)
+end
+
+function Modules.FpsMeter:Toggle()
+    if self.State.IsEnabled then
+        self:Disable()
+    else
+        self:Enable()
+    end
+end
+
+
+RegisterCommand({
+    Name = "fpsmeter",
+    Aliases = {"showfps", "fps"},
+    Description = "Toggles a client-side FPS meter."
+}, function()
+    Modules.FpsMeter:Toggle()
+end)
+
+Modules.AntiSit = {
+    State = {
+        IsEnabled = false,
+        CharacterConnections = {}
+    },
+    Services = {
+        Players = game:GetService("Players")
+    }
+}
+
+function Modules.AntiSit:_applyToCharacter(character)
+    if not character then return end
+    local humanoid = character:WaitForChild("Humanoid", 2)
+    if not humanoid then return end
+
+    humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+
+    local sitConnection = humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
+        if humanoid.Sit == true then
+            humanoid.Sit = false
+        end
+    end)
+    self.State.CharacterConnections[character] = sitConnection
+end
+
+function Modules.AntiSit:_revertForCharacter(character)
+    if not character then return end
+
+    if self.State.CharacterConnections[character] then
+        self.State.CharacterConnections[character]:Disconnect()
+        self.State.CharacterConnections[character] = nil
+    end
+
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        pcall(function()
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
+        end)
+    end
+end
+
+function Modules.AntiSit:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+
+    local localPlayer = self.Services.Players.LocalPlayer
+    if localPlayer.Character then
+        self:_applyToCharacter(localPlayer.Character)
+    end
+
+    self.State.CharacterConnections.Added = localPlayer.CharacterAdded:Connect(function(char)
+        self:_applyToCharacter(char)
+    end)
+    self.State.CharacterConnections.Removing = localPlayer.CharacterRemoving:Connect(function(char)
+        self:_revertForCharacter(char)
+    end)
+
+    DoNotif("Anti-Sit: ENABLED", 2)
+end
+
+function Modules.AntiSit:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+
+    if self.State.CharacterConnections.Added then
+        self.State.CharacterConnections.Added:Disconnect()
+    end
+    if self.State.CharacterConnections.Removing then
+        self.State.CharacterConnections.Removing:Disconnect()
+    end
+
+    local localPlayer = self.Services.Players.LocalPlayer
+    if localPlayer.Character then
+        self:_revertForCharacter(localPlayer.Character)
+    end
+    
+    table.clear(self.State.CharacterConnections)
+    DoNotif("Anti-Sit: DISABLED", 2)
+end
+
+function Modules.AntiSit:Toggle()
+    if self.State.IsEnabled then
+        self:Disable()
+    else
+        self:Enable()
+    end
+end
+
+RegisterCommand({
+    Name = "antisit",
+    Aliases = {"nosit"},
+    Description = "Toggles a system to prevent your character from sitting."
+}, function()
+    Modules.AntiSit:Toggle()
+end)
+
 RegisterCommand({
     Name = "night",
     Aliases = {"setnight", "nighttime"},
@@ -11597,6 +12238,126 @@ RegisterCommand({
     
     -- Notify the user of the successful change.
     DoNotif(string.format("Client time set to %02d:00", targetTime), 2)
+end)
+
+Modules.HitboxExtender = {
+    State = {
+        IsEnabled = false,
+        TrackedCharacters = setmetatable({}, {__mode = "k"}),
+        OriginalSizes = setmetatable({}, {__mode = "k"}),
+        Connections = {}
+    },
+    Config = {
+        TargetPartName = "HumanoidRootPart",
+        SizeMultiplier = 3
+    },
+    Services = {
+        Players = game:GetService("Players")
+    }
+}
+
+function Modules.HitboxExtender:_apply(character)
+    if not character or self.State.TrackedCharacters[character] then return end
+
+    local targetPart = character:FindFirstChild(self.Config.TargetPartName)
+    if not targetPart then return end
+
+    if not self.State.OriginalSizes[targetPart] then
+        self.State.OriginalSizes[targetPart] = targetPart.Size
+    end
+
+    targetPart.Size = self.State.OriginalSizes[targetPart] * self.Config.SizeMultiplier
+    targetPart.Transparency = 1
+    targetPart.CanCollide = false
+    self.State.TrackedCharacters[character] = true
+end
+
+function Modules.HitboxExtender:_revert(character)
+    if not character or not self.State.TrackedCharacters[character] then return end
+
+    local targetPart = character:FindFirstChild(self.Config.TargetPartName)
+    if targetPart and self.State.OriginalSizes[targetPart] then
+        targetPart.Size = self.State.OriginalSizes[targetPart]
+        targetPart.Transparency = self.State.OriginalSizes[targetPart].Transparency or 0
+        targetPart.CanCollide = self.State.OriginalSizes[targetPart].CanCollide or true
+        self.State.OriginalSizes[targetPart] = nil
+    end
+
+    self.State.TrackedCharacters[character] = nil
+end
+
+function Modules.HitboxExtender:Enable()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+
+    local function setupPlayer(player)
+        if player == self.Services.Players.LocalPlayer then return end
+
+        if player.Character then
+            self:_apply(player.Character)
+        end
+        
+        self.State.Connections[player] = {}
+        self.State.Connections[player].CharacterAdded = player.CharacterAdded:Connect(function(char) self:_apply(char) end)
+        self.State.Connections[player].CharacterRemoving = player.CharacterRemoving:Connect(function(char) self:_revert(char) end)
+    end
+
+    for _, player in ipairs(self.Services.Players:GetPlayers()) do
+        setupPlayer(player)
+    end
+
+    self.State.Connections.PlayerAdded = self.Services.Players.PlayerAdded:Connect(setupPlayer)
+    self.State.Connections.PlayerRemoving = self.Services.Players.PlayerRemoving:Connect(function(player)
+        if self.State.Connections[player] then
+            for _, conn in pairs(self.State.Connections[player]) do
+                conn:Disconnect()
+            end
+            self.State.Connections[player] = nil
+        end
+    end)
+
+    DoNotif("Hitbox Extender: ENABLED", 2)
+end
+
+function Modules.HitboxExtender:Disable()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+
+    for player, conns in pairs(self.State.Connections) do
+        if type(conns) == "table" then
+            for _, conn in pairs(conns) do conn:Disconnect() end
+        else
+            conns:Disconnect()
+        end
+    end
+    table.clear(self.State.Connections)
+
+    for character in pairs(self.State.TrackedCharacters) do
+        self:_revert(character)
+    end
+    
+    table.clear(self.State.OriginalSizes)
+    DoNotif("Hitbox Extender: DISABLED", 2)
+end
+
+RegisterCommand({
+    Name = "hitbox",
+    Aliases = {"enlarge", "bighitbox"},
+    Description = "Enlarges other players' hitboxes locally for easier melee hits."
+}, function(args)
+    local multiplier = tonumber(args[1])
+    if multiplier and multiplier > 0 then
+        Modules.HitboxExtender.Config.SizeMultiplier = multiplier
+        DoNotif("Hitbox multiplier set to " .. multiplier, 2)
+    end
+
+    if Modules.HitboxExtender.State.IsEnabled then
+        if not multiplier then
+            Modules.HitboxExtender:Disable()
+        end
+    else
+        Modules.HitboxExtender:Enable()
+    end
 end)
 
 local C2_ENVIRONMENT = {
