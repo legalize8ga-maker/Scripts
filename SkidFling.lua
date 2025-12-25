@@ -145,7 +145,7 @@ local function createFlingGui()
 	titleLabel.Size = UDim2.new(1, 0, 0, 40)
 	titleLabel.BackgroundTransparency = 1
 	titleLabel.Font = Enum.Font.GothamSemibold
-	titleLabel.Text = "Fling Utility"
+	titleLabel.Text = "leet fling"
 	titleLabel.TextColor3 = Color3.fromRGB(255, 182, 193)
 	titleLabel.TextSize = 20
 	titleLabel.Parent = mainFrame
