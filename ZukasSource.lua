@@ -7512,156 +7512,74 @@ function Modules.R6Enforcer:Initialize()
     end)
 end
 
-Modules.AntiKick = {
+Modules.ClientAntiKick = {
     State = {
         IsEnabled = false,
-        OriginalKick = nil,
-        OriginalTeleport = nil,
-        RenderSteppedConnection = nil
+        OriginalNamecall = nil
     },
     Services = {
-        RunService = game:GetService("RunService"),
-        UserInputService = game:GetService("UserInputService"),
-        CoreGui = game:GetService("CoreGui"),
-        Players = game:GetService("Players"),
-        TeleportService = game:GetService("TeleportService")
+        Players = game:GetService("Players")
     }
 }
 
---// --- Private Methods ---
-
--- Encapsulates the hooking logic for cleanliness.
-function Modules.AntiKick:_createHooks()
-    local localPlayer = self.Services.Players.LocalPlayer
-    if not localPlayer then return false, "LocalPlayer not available." end
-
-    local success, err = pcall(function()
-        -- 1. Hook Player:Kick()
-        local playerMetatable = getrawmetatable(localPlayer)
-        assert(playerMetatable, "Could not get Player metatable.")
-        
-        self.State.OriginalKick = playerMetatable.__index.Kick
-        assert(self.State.OriginalKick, "Could not find original Player:Kick function.")
-
-        -- Create the hook. Using newcclosure is best practice for stealth.
-        local kickHook = newcclosure(function(self, ...)
-            -- The first argument to a method is always the object itself.
-            -- We only block the kick if it's targeting our local player.
-            if self == localPlayer then
-                warn("--> [AntiKick] Blocked a client-side Player:Kick() request.")
-                return -- Discard the call by returning nothing.
-            end
-            -- For any other player, call the original function to preserve game logic.
-            return self.State.OriginalKick(self, ...)
-        end)
-        
-        rawset(playerMetatable.__index, "Kick", kickHook)
-
-        -- 2. Hook TeleportService:Teleport()
-        local tsMetatable = getrawmetatable(self.Services.TeleportService)
-        assert(tsMetatable, "Could not get TeleportService metatable.")
-
-        self.State.OriginalTeleport = tsMetatable.__index.Teleport
-        assert(self.State.OriginalTeleport, "Could not find original TeleportService:Teleport function.")
-        
-        local teleportHook = newcclosure(function(...)
-            warn("--> [AntiKick] Blocked a client-side Teleport request.")
-            return -- Always block client-side teleports initiated this way.
-        end)
-
-        rawset(tsMetatable.__index, "Teleport", teleportHook)
-    end)
-
-    if not success then
-        return false, tostring(err)
-    end
-
-    return true
-end
-
--- Encapsulates the restoration logic.
-function Modules.AntiKick:_removeHooks()
-    -- Restore Player:Kick()
-    pcall(function()
-        local localPlayer = self.Services.Players.LocalPlayer
-        if not localPlayer or not self.State.OriginalKick then return end
-        local playerMetatable = getrawmetatable(localPlayer)
-        rawset(playerMetatable.__index, "Kick", self.State.OriginalKick)
-        self.State.OriginalKick = nil
-    end)
-    
-    -- Restore TeleportService:Teleport()
-    pcall(function()
-        if not self.State.OriginalTeleport then return end
-        local tsMetatable = getrawmetatable(self.Services.TeleportService)
-        rawset(tsMetatable.__index, "Teleport", self.State.OriginalTeleport)
-        self.State.OriginalTeleport = nil
-    end)
-end
-
---// --- Public Methods ---
-
-function Modules.AntiKick:Enable()
+function Modules.ClientAntiKick:Enable()
     if self.State.IsEnabled then return end
-
-    -- Verify the executor supports the required hooking method.
-    if not getrawmetatable then
-        DoNotif("AntiKick Error: Your executor does not support getrawmetatable.", 5)
-        return
+    if not (getrawmetatable and getnamecallmethod) then
+        return DoNotif("Environment does not support metatable hooks.", 5)
     end
 
-    -- Attempt to create the hooks.
-    local success, err = self:_createHooks()
-    if not success then
-        DoNotif("AntiKick hook failed: " .. err, 5)
-        self:_removeHooks() -- Clean up any partial hooks
-        return
+    local localPlayer = self.Services.Players.LocalPlayer
+    local gameMetatable = getrawmetatable(game)
+    if not gameMetatable then
+        return DoNotif("Failed to get game metatable.", 4)
     end
+    
+    self.State.OriginalNamecall = gameMetatable.__namecall
+    
+    local success, err = pcall(function()
+        setreadonly(gameMetatable, false)
+        gameMetatable.__namecall = newcclosure(function(...)
+            local selfArg = select(1, ...)
+            local method = getnamecallmethod()
 
-    --// --- Setup RenderStepped Loop for GUI/Modal Lock (This logic was already excellent) ---
-    local KICK_GUI_KEYWORDS = {"kick", "ban", "warn", "exploit"}
-    self.State.RenderSteppedConnection = self.Services.RunService.RenderStepped:Connect(function()
-        -- Persistently fight against input being disabled.
-        if self.Services.UserInputService.ModalEnabled then
-            self.Services.UserInputService.ModalEnabled = false
-        end
-
-        -- Scan and destroy any UI that looks like a kick screen.
-        for _, gui in ipairs(self.Services.CoreGui:GetChildren()) do
-            if gui:IsA("ScreenGui") then
-                local guiNameLower = gui.Name:lower()
-                for _, keyword in ipairs(KICK_GUI_KEYWORDS) do
-                    if guiNameLower:find(keyword, 1, true) then
-                        warn("--> [AntiKick] Detected and destroyed a potential kick GUI: " .. gui.Name)
-                        gui:Destroy()
-                        break -- Move to the next GUI
-                    end
-                end
+            if selfArg == localPlayer and method:lower() == "kick" then
+                warn("--> [AntiKick] Blocked a client-side Kick() request.")
+                return
             end
-        end
+            
+            return self.State.OriginalNamecall(...)
+        end)
+        setreadonly(gameMetatable, true)
     end)
+
+    if not success then
+        DoNotif("Anti-kick hook failed: " .. tostring(err), 4)
+        self:Disable()
+        return
+    end
 
     self.State.IsEnabled = true
-    DoNotif("Anti-Kick: ENABLED. Client-side kicks will be blocked.", 3)
+    DoNotif("Client Anti-Kick: ENABLED", 2)
 end
 
-function Modules.AntiKick:Disable()
+function Modules.ClientAntiKick:Disable()
     if not self.State.IsEnabled then return end
 
-    -- Restore the original functions.
-    self:_removeHooks()
-    
-    -- Disconnect the RenderStepped loop.
-    if self.State.RenderSteppedConnection then
-        self.State.RenderSteppedConnection:Disconnect()
-        self.State.RenderSteppedConnection = nil
+    if self.State.OriginalNamecall then
+        pcall(function()
+            local gameMetatable = getrawmetatable(game)
+            setreadonly(gameMetatable, false)
+            gameMetatable.__namecall = self.State.OriginalNamecall
+            setreadonly(gameMetatable, true)
+        end)
     end
 
+    self.State.OriginalNamecall = nil
     self.State.IsEnabled = false
-    DoNotif("Anti-Kick: DISABLED.", 2)
+    DoNotif("Client Anti-Kick: DISABLED", 2)
 end
 
-function Modules.AntiKick:Toggle()
+function Modules.ClientAntiKick:Toggle()
     if self.State.IsEnabled then
         self:Disable()
     else
@@ -7669,14 +7587,16 @@ function Modules.AntiKick:Toggle()
     end
 end
 
---// --- Command Registration (Assuming this function exists elsewhere) ---
-RegisterCommand({
-    Name = "antikick",
-    Aliases = {"nokick"},
-    Description = "Toggles a system to block most client-sided kick attempts."
-}, function()
-    Modules.AntiKick:Toggle()
-end)
+function Modules.ClientAntiKick:Initialize()
+    local module = self
+    RegisterCommand({
+        Name = "clientantikick",
+        Aliases = {"antikick"},
+        Description = "Toggles a hook to block client-sided kick attempts."
+    }, function()
+        module:Toggle()
+    end)
+end
 
 Modules.AntiPlayerPhysics = {
     State = {
@@ -7883,6 +7803,109 @@ function Modules.AntiKill:Initialize()
         Description = "Toggles a client-sided system to resist flings and character manipulation."
     }, function()
         module:Toggle()
+    end)
+end
+
+Modules.SpectateController = {
+    State = {
+        IsEnabled = false,
+        TargetPlayer = nil,
+        Connections = {}
+    },
+    Services = {
+        Players = game:GetService("Players"),
+        Workspace = game:GetService("Workspace")
+    }
+}
+
+function Modules.SpectateController:_cleanup()
+    for _, conn in pairs(self.State.Connections) do
+        if conn and conn.Connected then
+            conn:Disconnect()
+        end
+    end
+    table.clear(self.State.Connections)
+    self.State.IsEnabled = false
+    self.State.TargetPlayer = nil
+end
+
+function Modules.SpectateController:Disable()
+    if not self.State.IsEnabled then return end
+    
+    local localPlayer = self.Services.Players.LocalPlayer
+    self:_cleanup()
+    
+    if self.Services.Workspace.CurrentCamera and localPlayer.Character then
+        self.Services.Workspace.CurrentCamera.CameraSubject = localPlayer.Character
+    end
+    
+    DoNotif("Spectate disabled.", 2)
+end
+
+function Modules.SpectateController:Enable(targetPlayer: Player)
+    self:Disable()
+    
+    if not targetPlayer or targetPlayer == self.Services.Players.LocalPlayer then
+        return DoNotif("Invalid or self-targeted player.", 3)
+    end
+    
+    if not targetPlayer.Character then
+        return DoNotif("Target player does not have a character to spectate.", 3)
+    end
+    
+    self.State.IsEnabled = true
+    self.State.TargetPlayer = targetPlayer
+    
+    local camera = self.Services.Workspace.CurrentCamera
+    camera.CameraSubject = targetPlayer.Character
+    
+    local function resetView()
+        if self.State.IsEnabled and self.State.TargetPlayer and self.State.TargetPlayer.Character then
+            if camera.CameraSubject ~= self.State.TargetPlayer.Character then
+                camera.CameraSubject = self.State.TargetPlayer.Character
+            end
+        else
+            self:Disable()
+        end
+    end
+    
+    self.State.Connections.TargetRespawn = targetPlayer.CharacterAdded:Connect(function(newCharacter)
+        task.wait()
+        resetView()
+    end)
+    
+    self.State.Connections.CameraGuard = camera:GetPropertyChangedSignal("CameraSubject"):Connect(resetView)
+    self.State.Connections.LocalPlayerRespawn = self.Services.Players.LocalPlayer.CharacterAdded:Connect(function()
+        task.wait(0.1)
+        resetView()
+    end)
+    
+    DoNotif("Now spectating " .. targetPlayer.Name, 2)
+end
+
+function Modules.SpectateController:Initialize()
+    RegisterCommand({
+        Name = "view",
+        Aliases = {"spectate"},
+        Description = "Spectates a specified player."
+    }, function(args)
+        if not args[1] then
+            return DoNotif("Usage: ;view <PlayerName>", 3)
+        end
+        local target = Utilities.findPlayer(args[1])
+        if target then
+            self:Enable(target)
+        else
+            DoNotif("Player '" .. args[1] .. "' not found.", 3)
+        end
+    end)
+
+    RegisterCommand({
+        Name = "unview",
+        Aliases = {"unspectate"},
+        Description = "Stops spectating and returns to your character."
+    }, function()
+        self:Disable()
     end)
 end
 
@@ -8524,8 +8547,7 @@ Modules.AdminSpoofDemonstration = {
     Dependencies = {"Players"} -- Declares required services for the Initialize function.
 }
 
---- Enables the UserId spoof with the provided target ID.
--- @param targetId <number> The UserId to spoof.
+
 function Modules.AdminSpoofDemonstration:Enable(targetId)
     if self.State.IsSpoofing then
         DoNotif("Already spoofing UserId. Reset first.", 3)
@@ -8618,6 +8640,131 @@ function Modules.AdminSpoofDemonstration:Initialize()
                 DoNotif("Invalid UserId. It must be a positive number.", 3)
             end
         end
+    end)
+end
+
+Modules.OrbitController = {
+    State = {
+        IsEnabled = false,
+        TargetPlayer = nil,
+        Rotation = 0,
+        Connections = {}
+    },
+    Config = {
+        DefaultSpeed = 0.2,
+        DefaultDistance = 6
+    },
+    Services = {
+        Players = game:GetService("Players"),
+        RunService = game:GetService("RunService")
+    }
+}
+
+function Modules.OrbitController:Disable(shouldNotify: boolean)
+    if not self.State.IsEnabled then return end
+
+    for _, conn in pairs(self.State.Connections) do
+        if conn and conn.Connected then
+            conn:Disconnect()
+        end
+    end
+    table.clear(self.State.Connections)
+
+    local localPlayer = self.Services.Players.LocalPlayer
+    if localPlayer.Character then
+        local humanoid = localPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.AutoRotate = true
+        end
+    end
+
+    self.State.IsEnabled = false
+    self.State.TargetPlayer = nil
+    
+    if shouldNotify then
+        DoNotif("Orbit stopped.", 2)
+    end
+end
+
+function Modules.OrbitController:Enable(targetPlayer: Player, speed: number?, distance: number?)
+    self:Disable(false)
+
+    local localPlayer = self.Services.Players.LocalPlayer
+    local myChar = localPlayer.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local myHumanoid = myChar and myChar:FindFirstChildOfClass("Humanoid")
+    local targetChar = targetPlayer and targetPlayer.Character
+    local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+
+    if not (myRoot and myHumanoid and targetRoot) then
+        return DoNotif("Orbit failed: A character part could not be found.", 3)
+    end
+
+    self.State.IsEnabled = true
+    self.State.TargetPlayer = targetPlayer
+    self.State.Rotation = 0
+    myHumanoid.AutoRotate = false
+
+    local orbitSpeed = tonumber(speed) or self.Config.DefaultSpeed
+    local orbitDistance = tonumber(distance) or self.Config.DefaultDistance
+
+    self.State.Connections.Heartbeat = self.Services.RunService.Heartbeat:Connect(function()
+        pcall(function()
+            if not (self.State.IsEnabled and self.State.TargetPlayer and self.State.TargetPlayer.Character) then
+                return self:Disable(true)
+            end
+            local currentTargetRoot = self.State.TargetPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if not currentTargetRoot then return self:Disable(true) end
+
+            self.State.Rotation = self.State.Rotation + orbitSpeed
+            myRoot.CFrame = CFrame.new(currentTargetRoot.Position) * CFrame.Angles(0, self.State.Rotation, 0) * CFrame.new(orbitDistance, 0, 0)
+        end)
+    end)
+
+    self.State.Connections.RenderStepped = self.Services.RunService.RenderStepped:Connect(function()
+        pcall(function()
+            if not (self.State.IsEnabled and self.State.TargetPlayer and self.State.TargetPlayer.Character) then
+                return self:Disable(true)
+            end
+            local currentTargetRoot = self.State.TargetPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if not currentTargetRoot then return self:Disable(true) end
+
+            myRoot.CFrame = CFrame.new(myRoot.Position, currentTargetRoot.Position)
+        end)
+    end)
+
+    self.State.Connections.Died = myHumanoid.Died:Connect(function() self:Disable(true) end)
+    self.State.Connections.Seated = myHumanoid.Seated:Connect(function(isSeated)
+        if isSeated then self:Disable(true) end
+    end)
+
+    DoNotif("Orbiting " .. targetPlayer.Name, 2)
+end
+
+function Modules.OrbitController:Initialize()
+    RegisterCommand({
+        Name = "orbit",
+        Aliases = {},
+        Description = "Orbits your character around a target player."
+    }, function(args)
+        if not args[1] then
+            return DoNotif("Usage: ;orbit <PlayerName> [speed] [distance]", 3)
+        end
+        local target = Utilities.findPlayer(args[1])
+        if target then
+            self:Enable(target, args[2], args[3])
+        else
+            DoNotif("Player '" .. args[1] .. "' not found.", 3)
+        end
+    end)
+
+    RegisterCommand({
+        Name = "unorbit",
+        Aliases = {},
+        Description = "Stops orbiting the current target."
+    }, function(args)
+        local shouldNotify = not (args[1] and args[1]:lower() == "nonotify")
+        self:Disable(shouldNotify)
     end)
 end
 
@@ -8761,6 +8908,236 @@ function Modules.MADGuardian:Initialize()
     end)
 end
 
+local function readTable(tbl: table): string
+    local function serialize(value: any, indent: number, visited: {[table]: boolean}): string
+        local valueType: string = typeof(value)
+
+        if valueType == "string" then
+            return string.format("%q", value)
+        elseif valueType == "number" or valueType == "boolean" or valueType == "nil" then
+            return tostring(value)
+        elseif valueType == "function" or valueType == "thread" or valueType == "userdata" then
+            return string.format("\"<%s>\"", valueType)
+        elseif valueType == "Instance" then
+            return string.format("\"%s (%s)\"", value, value.ClassName)
+        elseif valueType == "table" then
+            if visited[value] then
+                return "\"*Circular Reference*\""
+            end
+
+            visited[value] = true
+            local str: string = "{\n"
+            local indentation: string = string.rep("    ", indent + 1)
+            local isNumeric: boolean = true
+            local count: number = 0
+
+            for i: number = 1, #value do
+                str ..= indentation .. serialize(value[i], indent + 1, visited) .. ",\n"
+                count += 1
+            end
+
+            for k: any, v: any in pairs(value) do
+                if type(k) ~= "number" or k < 1 or k > #value or k % 1 ~= 0 then
+                    isNumeric = false
+                    break
+                end
+            end
+
+            if not isNumeric then
+                for k: any, v: any in pairs(value) do
+                     local keyStr: string
+                     if typeof(k) == "string" then
+                         keyStr = string.format("[\"%s\"]", k)
+                     else
+                         keyStr = string.format("[%s]", tostring(k))
+                     end
+                     str ..= indentation .. keyStr .. " = " .. serialize(v, indent + 1, visited) .. ",\n"
+                 end
+            end
+
+            str ..= string.rep("    ", indent) .. "}"
+            visited[value] = false
+            return str
+        else
+            return tostring(value)
+        end
+    end
+
+    return serialize(tbl, 0, {})
+end
+
+Modules.RemoteInterceptor = {
+    State = {
+        IsEnabled = false,
+        InterceptedRemotes = {}
+    },
+    Dependencies = {"CoreGui"},
+    Services = {}
+}
+
+function Modules.RemoteInterceptor:_getInstanceFromPath(path: string): Instance?
+    local current = game
+    for component in string.gmatch(path, "[^%.]+") do
+        if not current then return nil end
+        if string.find(component, ":GetService") then
+            local serviceName = component:match("'(.-)'") or component:match('"(.-)"')
+            current = serviceName and current:GetService(serviceName) or nil
+        else
+            current = current:FindFirstChild(component)
+        end
+    end
+    return current
+end
+
+function Modules.RemoteInterceptor:_logCall(remote: Instance, ...: any)
+    local args = {...}
+    local log = {"--> [Interceptor] Call detected on: " .. remote:GetFullName()}
+    
+    for i, arg in ipairs(args) do
+        local argType = typeof(arg)
+        local serializedValue
+        if argType == "table" then
+            serializedValue = readTable(arg)
+        else
+            serializedValue = tostring(arg)
+        end
+        table.insert(log, string.format("    - Arg #%d [%s]: %s", i, argType, serializedValue))
+    end
+    
+    print(table.concat(log, "\n"))
+end
+
+function Modules.RemoteInterceptor:Intercept(remotePath: string)
+    if self.State.InterceptedRemotes[remotePath] then
+        return DoNotif("This remote is already being intercepted.", 3)
+    end
+
+    local originalRemote = self:_getInstanceFromPath(remotePath)
+    if not (originalRemote and (originalRemote:IsA("RemoteEvent") or originalRemote:IsA("RemoteFunction"))) then
+        return DoNotif("Remote not found or invalid type at path: " .. remotePath, 4)
+    end
+
+    local originalParent = originalRemote.Parent
+    local originalName = originalRemote.Name
+
+    local proxy = {}
+    local metatable = {
+        __index = function(_, key)
+            if key == "FireServer" and originalRemote:IsA("RemoteEvent") then
+                return function(_, ...)
+                    self:_logCall(originalRemote, ...)
+                    return originalRemote:FireServer(...)
+                end
+            elseif key == "InvokeServer" and originalRemote:IsA("RemoteFunction") then
+                return function(_, ...)
+                    self:_logCall(originalRemote, ...)
+                    return originalRemote:InvokeServer(...)
+                end
+            end
+            return originalRemote[key]
+        end,
+        __newindex = function(_, key, value)
+            originalRemote[key] = value
+        end
+    }
+    setmetatable(proxy, metatable)
+    
+    local proxyInstance = Instance.new("RemoteEvent")
+    proxyInstance.Name = originalName
+    
+    local success, err = pcall(function()
+        for i = 1, 20 do
+            if originalParent:FindFirstChild(originalName) == originalRemote then
+                break
+            end
+            task.wait()
+        end
+        originalRemote.Parent = self.Services.CoreGui
+        proxyInstance.Parent = originalParent
+    end)
+
+    if not success then
+        DoNotif("Failed to swap remote. It may be protected.", 4)
+        if originalRemote.Parent ~= originalParent then
+            originalRemote.Parent = originalParent
+        end
+        return
+    end
+
+    self.State.InterceptedRemotes[remotePath] = {
+        Original = originalRemote,
+        Proxy = proxy,
+        ProxyInstance = proxyInstance,
+        Parent = originalParent,
+        Name = originalName
+    }
+
+    proxyInstance.OnServerEvent:Connect(function(_, ...)
+        if originalRemote:IsA("RemoteEvent") then
+            self:_logCall(originalRemote, ...)
+            originalRemote:FireServer(...)
+        end
+    end)
+    
+    DoNotif("Successfully intercepted: " .. originalName, 3)
+end
+
+
+function Modules.RemoteInterceptor:Restore(remotePath: string)
+    local data = self.State.InterceptedRemotes[remotePath]
+    if not data then
+        return DoNotif("Remote is not currently intercepted.", 3)
+    end
+
+    if data.ProxyInstance and data.ProxyInstance.Parent then
+        data.ProxyInstance:Destroy()
+    end
+    
+    data.Original.Parent = data.Parent
+    self.State.InterceptedRemotes[remotePath] = nil
+    DoNotif("Restored original remote: " .. data.Name, 2)
+end
+
+function Modules.RemoteInterceptor:Initialize()
+    for _, serviceName in ipairs(self.Dependencies) do
+        self.Services[serviceName] = game:GetService(serviceName)
+    end
+
+    RegisterCommand({
+        Name = "intercept",
+        Aliases = {"spy"},
+        Description = "Intercepts a remote to spy on its arguments."
+    }, function(args)
+        if not args[1] then
+            return DoNotif("Usage: ;intercept <path.to.remote>", 3)
+        end
+        self:Intercept(args[1])
+    end)
+
+    RegisterCommand({
+        Name = "unintercept",
+        Aliases = {"unspy"},
+        Description = "Restores an intercepted remote."
+    }, function(args)
+        if not args[1] then
+            return DoNotif("Usage: ;unintercept <path.to.remote>", 3)
+        end
+        self:Restore(args[1])
+    end)
+
+    RegisterCommand({
+        Name = "intercepted",
+        Description = "Lists all currently intercepted remotes."
+    }, function()
+        local count = 0
+        print("--- [Active Interceptors] ---")
+        for path, _ in pairs(self.State.InterceptedRemotes) do
+            print("- " .. path)
+            count = count + 1
+        end
+        DoNotif("Listed " .. count .. " intercepted remote(s) in the F9 console.", 2)
+    end)
+end
 
 Modules.ClientCanary = {
     State = {
@@ -10343,6 +10720,63 @@ function Modules.AntiAnchor:Initialize()
     end)
 end
 
+Modules.TeleportTool = {
+    State = {},
+    Dependencies = {"Players"},
+    Services = {}
+}
+
+function Modules.TeleportTool:Create()
+    local localPlayer = self.Services.Players.LocalPlayer
+    if not localPlayer then
+        return DoNotif("Teleport Tool creation failed: LocalPlayer not found.", 3)
+    end
+
+    if localPlayer.Backpack:FindFirstChild("Teleport Tool") or (localPlayer.Character and localPlayer.Character:FindFirstChild("Teleport Tool")) then
+        return DoNotif("You already have the Teleport Tool.", 2)
+    end
+
+    local tpTool = Instance.new("Tool")
+    tpTool.Name = "Teleport Tool"
+    tpTool.RequiresHandle = false
+    tpTool.Parent = localPlayer.Backpack
+
+    local mouse = localPlayer:GetMouse()
+
+    tpTool.Activated:Connect(function()
+        local character = localPlayer.Character
+        local hrp = character and character:FindFirstChild("HumanoidRootPart")
+        if not hrp then
+            return DoNotif("Could not find HumanoidRootPart to teleport.", 3)
+        end
+
+        local success, hitPosition = pcall(function() return mouse.Hit.Position end)
+        if not success or not hitPosition then
+            return DoNotif("No valid target position under cursor.", 2)
+        end
+        
+        local newPosition = hitPosition + Vector3.new(0, 3, 0)
+        hrp.CFrame = CFrame.new(newPosition) * (hrp.CFrame - hrp.CFrame.Position)
+    end)
+
+    DoNotif("Teleport Tool has been added to your backpack.", 2)
+end
+
+function Modules.TeleportTool:Initialize()
+    local module = self
+    for _, serviceName in ipairs(module.Dependencies) do
+        module.Services[serviceName] = game:GetService(serviceName)
+    end
+
+    RegisterCommand({
+        Name = "tptool",
+        Aliases = {"teleporttool"},
+        Description = "Gives you a tool that teleports you to your mouse cursor on click."
+    }, function()
+        module:Create()
+    end)
+end
+
 Modules.FakeLag = {
     State = {
         IsEnabled = false,
@@ -10487,6 +10921,157 @@ function Modules.FakeLag:Initialize()
         Description = "Stops the fake lag command."
     }, function()
         module:Disable()
+    end)
+end
+
+Modules.ClickDetectorTools = {
+    State = {},
+    Dependencies = {"Workspace"},
+    Services = {}
+}
+
+function Modules.ClickDetectorTools:Initialize()
+    self.Services.Workspace = game:GetService("Workspace")
+
+    RegisterCommand({
+        Name = "noclickdetectorlimits",
+        Aliases = {"nocdlimits", "removecdlimits"},
+        Description = "Removes the distance limit for all ClickDetectors in the workspace."
+    }, function()
+        local count = 0
+        for _, v in ipairs(self.Services.Workspace:GetDescendants()) do
+            if v:IsA("ClickDetector") then
+                v.MaxActivationDistance = math.huge
+                count = count + 1
+            end
+        end
+        DoNotif("Removed distance limits on " .. count .. " ClickDetectors.", 2)
+    end)
+
+    RegisterCommand({
+        Name = "fireclickdetectors",
+        Aliases = {"firecd", "firecds"},
+        Description = "Fires all ClickDetectors in the workspace, or a specific one by name."
+    }, function(args)
+        if not fireclickdetector then
+            return DoNotif("Environment does not support 'fireclickdetector'.", 4)
+        end
+
+        local count = 0
+        if args[1] then
+            local name = table.concat(args, " ")
+            for _, descendant in ipairs(self.Services.Workspace:GetDescendants()) do
+                if descendant:IsA("ClickDetector") and (descendant.Name == name or descendant.Parent.Name == name) then
+                    fireclickdetector(descendant)
+                    count = count + 1
+                end
+            end
+        else
+            for _, descendant in ipairs(self.Services.Workspace:GetDescendants()) do
+                if descendant:IsA("ClickDetector") then
+                    fireclickdetector(descendant)
+                    count = count + 1
+                end
+            end
+        end
+        DoNotif("Fired " .. count .. " ClickDetector(s).", 2)
+    end)
+end
+
+Modules.ProximityPromptTools = {
+    State = {
+        InstantPromptConnection = nil
+    },
+    Dependencies = {"Workspace", "ProximityPromptService"},
+    Services = {}
+}
+
+function Modules.ProximityPromptTools:DisableInstantPrompts()
+    if self.State.InstantPromptConnection then
+        self.State.InstantPromptConnection:Disconnect()
+        self.State.InstantPromptConnection = nil
+        DoNotif("Instant Proximity Prompts: DISABLED", 2)
+    end
+end
+
+function Modules.ProximityPromptTools:EnableInstantPrompts()
+    if not fireproximityprompt then
+        return DoNotif("Environment does not support 'fireproximityprompt'.", 4)
+    end
+    self:DisableInstantPrompts()
+    
+    self.State.InstantPromptConnection = self.Services.ProximityPromptService.PromptButtonHoldBegan:Connect(function(prompt)
+        fireproximityprompt(prompt)
+    end)
+    DoNotif("Instant Proximity Prompts: ENABLED", 2)
+end
+
+function Modules.ProximityPromptTools:Initialize()
+    for _, serviceName in ipairs(self.Dependencies) do
+        self.Services[serviceName] = game:GetService(serviceName)
+    end
+
+    RegisterCommand({
+        Name = "noproximitypromptlimits",
+        Aliases = {"nopplimits", "removepplimits"},
+        Description = "Removes the distance limit for all ProximityPrompts."
+    }, function()
+        local count = 0
+        for _, v in pairs(self.Services.Workspace:GetDescendants()) do
+            if v:IsA("ProximityPrompt") then
+                v.MaxActivationDistance = math.huge
+                count = count + 1
+            end
+        end
+        DoNotif("Removed distance limits on " .. count .. " ProximityPrompts.", 2)
+    end)
+
+    RegisterCommand({
+        Name = "fireproximityprompts",
+        Aliases = {"firepp"},
+        Description = "Fires all ProximityPrompts, or a specific one by name."
+    }, function(args)
+        if not fireproximityprompt then
+            return DoNotif("Environment does not support 'fireproximityprompt'.", 4)
+        end
+        local count = 0
+        if args[1] then
+            local name = table.concat(args, " ")
+            for _, descendant in ipairs(self.Services.Workspace:GetDescendants()) do
+                if descendant:IsA("ProximityPrompt") and (descendant.Name == name or descendant.Parent.Name == name) then
+                    fireproximityprompt(descendant)
+                    count = count + 1
+                end
+            end
+        else
+            for _, descendant in ipairs(self.Services.Workspace:GetDescendants()) do
+                if descendant:IsA("ProximityPrompt") then
+                    fireproximityprompt(descendant)
+                    count = count + 1
+                end
+            end
+        end
+        DoNotif("Fired " .. count .. " ProximityPrompt(s).", 2)
+    end)
+
+    RegisterCommand({
+        Name = "instantproximityprompts",
+        Aliases = {"instantpp"},
+        Description = "Toggles instant triggering of proximity prompts."
+    }, function()
+        if self.State.InstantPromptConnection then
+            self:DisableInstantPrompts()
+        else
+            self:EnableInstantPrompts()
+        end
+    end)
+
+    RegisterCommand({
+        Name = "uninstantproximityprompts",
+        Aliases = {"uninstantpp"},
+        Description = "Explicitly disables instant proximity prompts."
+    }, function()
+        self:DisableInstantPrompts()
     end)
 end
 
