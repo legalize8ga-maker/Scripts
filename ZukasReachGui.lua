@@ -17,16 +17,6 @@ local currentReachSize: number = 20
 local currentReachType: "directional" | "box" = "directional"
 local uiElements = {}
 
-local THEME = {
-	Background = Color3.fromRGB(34, 32, 38),
-	Accent = Color3.fromRGB(255, 105, 180),
-	Title = Color3.fromRGB(255, 182, 193),
-	Text = Color3.fromRGB(240, 240, 240),
-	Interactive = Color3.fromRGB(45, 42, 50),
-	InteractiveActive = Color3.fromRGB(60, 57, 65),
-	Destructive = Color3.fromRGB(200, 70, 90)
-}
-
 local function updatePartModification(part: BasePart, newSize: number?, reachType: string?)
 	if not part or not part.Parent then return end
 
@@ -57,7 +47,7 @@ local function updatePartModification(part: BasePart, newSize: number?, reachTyp
 		selectionBox.Parent = part
 	end
 	
-	selectionBox.Color3 = reachType == "box" and Color3.fromRGB(80, 120, 255) or THEME.Accent
+	selectionBox.Color3 = reachType == "box" and Color3.fromRGB(80, 120, 255) or Color3.fromRGB(255, 105, 180)
 	
 	if reachType == "box" then
 		part.Size = Vector3.one * newSize
@@ -93,9 +83,9 @@ local function populatePartSelector()
 		btn.Size = UDim2.new(1, -10, 0, 30)
 		btn.Position = UDim2.fromScale(0.5, 0)
 		btn.AnchorPoint = Vector2.new(0.5, 0)
-		btn.BackgroundColor3 = THEME.Interactive
-		btn.TextColor3 = THEME.Text
-		btn.Font = Enum.Font.Code
+		btn.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+		btn.TextColor3 = Color3.fromRGB(240, 240, 240)
+		btn.Font = Enum.Font.Gotham
 		btn.Text = part.Name
 		btn.TextSize = 14
 		btn.Parent = scroll
@@ -185,6 +175,10 @@ local function onCharacterAdded(character: Model)
 end
 
 local function createInterface()
+	if CoreGui:FindFirstChild("ReachController_Zuka_Radiant") then
+		CoreGui.ReachController_Zuka_Radiant:Destroy()
+	end
+	
 	local ui = Instance.new("ScreenGui")
 	ui.Name = "ReachController_Zuka_Radiant"
 	ui.ZIndexBehavior = Enum.ZIndexBehavior.Global
@@ -193,7 +187,7 @@ local function createInterface()
 	local mainFrame = Instance.new("Frame")
 	mainFrame.Size = UDim2.fromOffset(250, 320)
 	mainFrame.Position = UDim2.fromScale(0, 0)
-	mainFrame.BackgroundColor3 = THEME.Background
+	mainFrame.BackgroundColor3 = Color3.fromRGB(34, 32, 38)
 	mainFrame.BackgroundTransparency = 0.1
 	mainFrame.BorderSizePixel = 0
 	mainFrame.ClipsDescendants = true
@@ -201,7 +195,7 @@ local function createInterface()
 	Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
 	
 	local uiStroke = Instance.new("UIStroke", mainFrame)
-	uiStroke.Color = THEME.Accent
+	uiStroke.Color = Color3.fromRGB(255, 105, 180)
 	uiStroke.Thickness = 2
 	
 	local glowConnection
@@ -217,35 +211,35 @@ local function createInterface()
 	
 	local titleBar = Instance.new("Frame")
 	titleBar.Name = "TitleBar"
-	titleBar.Size = UDim2.new(1, 0, 0, 30)
+	titleBar.Size = UDim2.new(1, 0, 0, 40)
 	titleBar.BackgroundTransparency = 1
 	titleBar.Parent = mainFrame
 	
 	local title = Instance.new("TextLabel", titleBar)
-	title.Size = UDim2.new(1, -30, 1, 0)
-	title.Position = UDim2.fromOffset(10, 0)
+	title.Size = UDim2.new(1, 0, 1, 0)
 	title.BackgroundTransparency = 1
 	title.Font = Enum.Font.GothamSemibold
 	title.Text = "Reach Controller"
-	title.TextColor3 = THEME.Title
-	title.TextSize = 16
-	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.TextColor3 = Color3.fromRGB(255, 182, 193)
+	title.TextSize = 20
+	title.TextXAlignment = Enum.TextXAlignment.Center
 
 	local contentFrame = Instance.new("Frame")
 	contentFrame.Name = "Content"
-	contentFrame.Size = UDim2.new(1, 0, 1, -30)
-	contentFrame.Position = UDim2.new(0, 0, 0, 30)
+	contentFrame.Size = UDim2.new(1, 0, 1, -40)
+	contentFrame.Position = UDim2.new(0, 0, 0, 40)
 	contentFrame.BackgroundTransparency = 1
 	contentFrame.Parent = mainFrame
 	
 	local toggleButton = Instance.new("TextButton", titleBar)
-	toggleButton.Size = UDim2.fromOffset(20, 20)
+	toggleButton.Size = UDim2.fromOffset(25, 25)
 	toggleButton.Position = UDim2.new(1, -10, 0.5, 0)
 	toggleButton.AnchorPoint = Vector2.new(1, 0.5)
 	toggleButton.BackgroundTransparency = 1
 	toggleButton.Text = "-"
 	toggleButton.Font = Enum.Font.GothamBold
-	toggleButton.TextColor3 = THEME.Text
+	toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	toggleButton.TextSize = 24
 	
 	titleBar.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -273,34 +267,34 @@ local function createInterface()
 	sizeLabel.BackgroundTransparency = 1
 	sizeLabel.Font = Enum.Font.Gotham
 	sizeLabel.Text = "Reach Size:"
-	sizeLabel.TextColor3 = THEME.Text
+	sizeLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
 	sizeLabel.TextXAlignment = Enum.TextXAlignment.Left
 	
 	local sizeInput = Instance.new("TextBox", contentFrame)
 	sizeInput.Size = UDim2.fromOffset(130, 30)
 	sizeInput.Position = UDim2.fromOffset(110, 5)
-	sizeInput.BackgroundColor3 = THEME.Interactive
-	sizeInput.Font = Enum.Font.Code
+	sizeInput.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+	sizeInput.Font = Enum.Font.Gotham
 	sizeInput.Text = tostring(currentReachSize)
-	sizeInput.TextColor3 = THEME.Text
+	sizeInput.TextColor3 = Color3.fromRGB(240, 240, 240)
 	Instance.new("UICorner", sizeInput).CornerRadius = UDim.new(0, 4)
 	
 	local directionalBtn = Instance.new("TextButton", contentFrame)
 	directionalBtn.Size = UDim2.fromOffset(110, 30)
 	directionalBtn.Position = UDim2.fromOffset(10, 40)
-	directionalBtn.BackgroundColor3 = THEME.InteractiveActive
+	directionalBtn.BackgroundColor3 = Color3.fromRGB(45, 42, 50)
 	directionalBtn.Font = Enum.Font.GothamSemibold
 	directionalBtn.Text = "Directional"
-	directionalBtn.TextColor3 = THEME.Text
+	directionalBtn.TextColor3 = Color3.fromRGB(240, 240, 240)
 	Instance.new("UICorner", directionalBtn).CornerRadius = UDim.new(0, 4)
 	
 	local boxBtn = Instance.new("TextButton", contentFrame)
 	boxBtn.Size = UDim2.fromOffset(110, 30)
 	boxBtn.Position = UDim2.fromOffset(130, 40)
-	boxBtn.BackgroundColor3 = THEME.Interactive
+	boxBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 	boxBtn.Font = Enum.Font.GothamSemibold
 	boxBtn.Text = "Box"
-	boxBtn.TextColor3 = THEME.Text
+	boxBtn.TextColor3 = Color3.fromRGB(240, 240, 240)
 	Instance.new("UICorner", boxBtn).CornerRadius = UDim.new(0, 4)
 
 	local partsLabel = Instance.new("TextLabel", contentFrame)
@@ -309,7 +303,7 @@ local function createInterface()
 	partsLabel.BackgroundTransparency = 1
 	partsLabel.Font = Enum.Font.Gotham
 	partsLabel.Text = "Tool Parts:"
-	partsLabel.TextColor3 = THEME.Text
+	partsLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
 	partsLabel.TextXAlignment = Enum.TextXAlignment.Left
 
 	local scroll = Instance.new("ScrollingFrame", contentFrame)
@@ -318,17 +312,17 @@ local function createInterface()
 	scroll.BackgroundColor3 = Color3.fromRGB(20, 18, 22)
 	scroll.BorderSizePixel = 0
 	scroll.ScrollBarThickness = 6
-	scroll.ScrollBarImageColor3 = THEME.Accent
+	scroll.ScrollBarImageColor3 = Color3.fromRGB(255, 105, 180)
 	uiElements.ScrollingFrame = scroll
 	
 	local resetBtn = Instance.new("TextButton", contentFrame)
 	resetBtn.Size = UDim2.new(1, -20, 0, 30)
 	resetBtn.Position = UDim2.new(0.5, 0, 1, -10)
 	resetBtn.AnchorPoint = Vector2.new(0.5, 1)
-	resetBtn.BackgroundColor3 = THEME.Destructive
+	resetBtn.BackgroundColor3 = Color3.fromRGB(200, 70, 90)
 	resetBtn.Font = Enum.Font.GothamBold
 	resetBtn.Text = "Reset Reach"
-	resetBtn.TextColor3 = THEME.Text
+	resetBtn.TextColor3 = Color3.fromRGB(240, 240, 240)
 	Instance.new("UICorner", resetBtn).CornerRadius = UDim.new(0, 4)
 
 	sizeInput.FocusLost:Connect(function(enterPressed)
@@ -342,14 +336,14 @@ local function createInterface()
 
 	directionalBtn.MouseButton1Click:Connect(function()
 		currentReachType = "directional"
-		directionalBtn.BackgroundColor3 = THEME.InteractiveActive
-		boxBtn.BackgroundColor3 = THEME.Interactive
+		directionalBtn.BackgroundColor3 = Color3.fromRGB(45, 42, 50)
+		boxBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 	end)
 	
 	boxBtn.MouseButton1Click:Connect(function()
 		currentReachType = "box"
-		boxBtn.BackgroundColor3 = THEME.InteractiveActive
-		directionalBtn.BackgroundColor3 = THEME.Interactive
+		boxBtn.BackgroundColor3 = Color3.fromRGB(45, 42, 50)
+		directionalBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 	end)
 	
 	resetBtn.MouseButton1Click:Connect(resetReach)
@@ -358,8 +352,8 @@ local function createInterface()
 		local isVisible = not contentFrame.Visible
 		contentFrame.Visible = isVisible
 		toggleButton.Text = isVisible and "-" or "+"
-		local targetSize = isVisible and UDim2.fromOffset(250, 320) or UDim2.fromOffset(250, 30)
-		TweenService:Create(mainFrame, TweenInfo.new(0.2), {Size = targetSize}):Play()
+		local goalSize = isVisible and UDim2.fromOffset(250, 320) or UDim2.fromOffset(250, 40)
+		TweenService:Create(mainFrame, TweenInfo.new(0.2), {Size = goalSize}):Play()
 	end)
 	
 	ui.Parent = CoreGui
