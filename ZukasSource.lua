@@ -981,11 +981,45 @@ Modules.AstralProjection = {
     GUI = {},
     Services = {}
 }
-
+function Modules.AstralProjection:_makeDraggable(guiObject)
+    local UIS = self.Services.UserInputService
+    local dragging = false
+    local dragStart
+    local startPos
+    local function update(input)
+        local delta = input.Position - dragStart
+        guiObject.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+    guiObject.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = guiObject.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    guiObject.InputChanged:Connect(function(input)
+        if dragging and (
+            input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch
+        ) then
+            update(input)
+        end
+    end)
+end
 function Modules.AstralProjection:_updateUIState()
     local button = self.GUI.astralButton
     if not button then return end
-
     if self.State.isSpawning then
         button.BackgroundColor3 = Color3.fromRGB(255, 160, 0)
         button.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -997,7 +1031,6 @@ function Modules.AstralProjection:_updateUIState()
         button.TextColor3 = Color3.fromRGB(200, 200, 220)
     end
 end
-
 function Modules.AstralProjection:_applyVisuals(character, isAstral)
     local highlight = character:FindFirstChild("AstralHighlight")
     if isAstral and not highlight then
@@ -1010,31 +1043,23 @@ function Modules.AstralProjection:_applyVisuals(character, isAstral)
         highlight:Destroy()
     end
 end
-
 function Modules.AstralProjection:_setState(shouldProject)
-    if self.State.isSpawning then
-        return
-    end
+    if self.State.isSpawning then return end
     if self.State.isProjecting == shouldProject then return end
-
     local character = self.Services.LocalPlayer.Character
     if not character then return end
-    
     local hrp = character:FindFirstChild("HumanoidRootPart")
     local humanoid = character:FindFirstChildOfClass("Humanoid")
-
     if shouldProject then
         if not hrp or not humanoid or not hrp.Parent then return end
-        
         self.State.originalHRP = hrp
         self.State.originalParent = character
         local originalCFrame = hrp.CFrame
-        
-        self.State.originalHRP.Parent = nil
-        
+        hrp.Parent = nil
         self.State.isProjecting = true
-        if self.State.positionMarker then self.State.positionMarker:Destroy() end
-        
+        if self.State.positionMarker then
+            self.State.positionMarker:Destroy()
+        end
         local marker = Instance.new("Part")
         marker.Name = "PhysicalAnchor"
         marker.Size = Vector3.new(4, 5, 2)
@@ -1044,106 +1069,97 @@ function Modules.AstralProjection:_setState(shouldProject)
         marker.Transparency = 0.7
         marker.Parent = self.Services.Workspace
         self.State.positionMarker = marker
-        
         local highlight = Instance.new("Highlight", marker)
         highlight.FillColor = Color3.fromRGB(255, 50, 50)
         highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
         highlight.FillTransparency = 0.6
-        
         humanoid:ChangeState(Enum.HumanoidStateType.Running)
         self:_applyVisuals(character, true)
         DoNotif("Desync: ENABLED", 1.5)
     else
-        if not self.State.originalHRP or not self.State.originalParent or not self.State.originalParent.Parent then
-            self.State.isProjecting = false 
+        if not self.State.originalHRP or not self.State.originalParent then
+            self.State.isProjecting = false
             return
         end
         if self.State.positionMarker then
             self.State.positionMarker:Destroy()
             self.State.positionMarker = nil
         end
-        
         self.State.originalHRP.Parent = self.State.originalParent
-        
-        self.State.isProjecting = false
         self.State.originalHRP = nil
         self.State.originalParent = nil
+        self.State.isProjecting = false
         self:_applyVisuals(character, false)
         DoNotif("Desync: DISABLED", 1.5)
     end
     self:_updateUIState()
 end
-
 function Modules.AstralProjection:_onDied()
     self:_setState(false)
 end
-
 function Modules.AstralProjection:_onCharacterAdded(character)
     self.State.isSpawning = true
     self:_updateUIState()
-
-    if self.State.isProjecting then self:_setState(false) end
-    if self.State.deathConnection then self.State.deathConnection:Disconnect() end
-    
+    if self.State.isProjecting then
+        self:_setState(false)
+    end
+    if self.State.deathConnection then
+        self.State.deathConnection:Disconnect()
+    end
     local humanoid = character:WaitForChild("Humanoid")
-    self.State.deathConnection = humanoid.Died:Connect(function() self:_onDied() end)
-    
+    self.State.deathConnection = humanoid.Died:Connect(function()
+        self:_onDied()
+    end)
     task.wait(self.Config.SPAWN_PROTECTION_DURATION)
     self.State.isSpawning = false
     self:_updateUIState()
 end
-
 function Modules.AstralProjection:Toggle()
     self:_setState(not self.State.isProjecting)
 end
-
 function Modules.AstralProjection:Initialize()
     self.Services.Players = game:GetService("Players")
     self.Services.UserInputService = game:GetService("UserInputService")
-    self.Services.RunService = game:GetService("RunService")
     self.Services.Workspace = game:GetService("Workspace")
     self.Services.LocalPlayer = self.Services.Players.LocalPlayer
     local PLAYER_GUI = self.Services.LocalPlayer:WaitForChild("PlayerGui")
-
-    local screenGui = Instance.new("ScreenGui", PLAYER_GUI)
+    local screenGui = Instance.new("ScreenGui")
     screenGui.Name = "AstralStatusGUI_V2"
     screenGui.ResetOnSpawn = false
+    screenGui.Parent = PLAYER_GUI
     self.GUI.screenGui = screenGui
-
-    local astralButton = Instance.new("TextButton", screenGui)
+    local astralButton = Instance.new("TextButton")
     astralButton.Name = "AstralToggleButton"
     astralButton.Size = UDim2.fromOffset(64, 64)
     astralButton.AnchorPoint = Vector2.new(1, 1)
-    astralButton.Position = UDim2.new(1, -20, 1, -20)
+    astralButton.Position = UDim2.new(1, -20, 1, -100) 
     astralButton.Font = Enum.Font.GothamBold
     astralButton.Text = "DSYNC"
     astralButton.TextSize = 14
+    astralButton.Parent = screenGui
     Instance.new("UICorner", astralButton).CornerRadius = UDim.new(1, 0)
-    
     local stroke = Instance.new("UIStroke", astralButton)
     stroke.Color = Color3.fromRGB(100, 100, 120)
     stroke.Thickness = 1.5
     self.GUI.astralButton = astralButton
-    
     self:_updateUIState()
-
-    astralButton.MouseButton1Click:Connect(function() self:Toggle() end)
-
-    self.Services.UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if gameProcessed or input.KeyCode ~= self.Config.TOGGLE_KEY then return end
+    self:_makeDraggable(astralButton)
+    astralButton.MouseButton1Click:Connect(function()
         self:Toggle()
     end)
-
+    self.Services.UserInputService.InputBegan:Connect(function(input, gp)
+        if gp then return end
+        if input.KeyCode == self.Config.TOGGLE_KEY then
+            self:Toggle()
+        end
+    end)
     if self.Services.LocalPlayer.Character then
         self:_onCharacterAdded(self.Services.LocalPlayer.Character)
     end
-
     self.Services.LocalPlayer.CharacterAdded:Connect(function(character)
         self:_onCharacterAdded(character)
     end)
 end
-
-
 RegisterCommand({
     Name = "astral",
     Aliases = {"desync", "unsync"},
