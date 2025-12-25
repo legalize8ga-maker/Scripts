@@ -12962,6 +12962,9 @@ RegisterCommand({Name = "tptohp", Aliases = {}, Description = "For https://www.r
 
 RegisterCommand({Name = "reachfix", Aliases = {"fix"}, Description = "Makes your equipped tool invisible when using reach"}, function() loadstringCmd("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/InvisibleEquippedTool.lua", "Fixed") end)
 
+RegisterCommand({Name = "reachmenu", Aliases = {}, Description = "A menu for quick reach settings."}, function() loadstringCmd("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/ZukasReachGui.lua", "Loading, Wait a sec.") end)
+
+
 function processCommand(message)
     if not (message:sub(1, #Prefix) == Prefix) then
         return false
