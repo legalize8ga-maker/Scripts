@@ -1,6 +1,6 @@
 --[[
 made by zuka @OverZuka on roblox
-v5.2 December 24th
+v6 December 25th -- BUNNI IS BACK WOOOOHOOOO
 github - loadstring(game:HttpGet("https://raw.githubusercontent.com/legalize8ga-maker/Scripts/refs/heads/main/ZukasSource.lua"))()
 --
 setpath game:GetService("ReplicatedStorage").events.equipItem,   settype function
