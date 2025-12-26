@@ -13121,21 +13121,21 @@ function Modules.InstanceInterceptor:Enable(): ()
         return DoNotif("Executor does not support hookfunction.", 4)
     end
 
-    self.State.OriginalNew = hookfunction(Instance.new, function(self: Instance, className: string, parent: Instance)
-        -- Check the parent first. A common pattern is to name the script something innocuous
-        -- but parent it to a "Manager" or "AntiCheat" service.
-        if parent and self.State.Blacklist[parent.Name] then
-            warn("--> [InstanceInterceptor] Blocked creation of " .. className .. " due to blacklisted parent: " .. parent.Name)
+    local module = self -- Capture the module's context for the closure
+
+    -- [FIX] Corrected function signature to match Instance.new(className, parent)
+    -- This resolves the argument misalignment and prevents the hook from breaking other scripts.
+    self.State.OriginalNew = hookfunction(Instance.new, function(className: string, parent: Instance)
+        if parent and module.State.Blacklist[parent.Name] then
+            print("--> [InstanceInterceptor] Blocked creation of " .. className .. " due to blacklisted parent: " .. parent.Name)
             return nil
         end
         
-        -- The Instance.new call is still processed to get the new object
-        local instance = self.State.OriginalNew(self, className, parent)
+        local instance = module.State.OriginalNew(className, parent)
         
-        -- Now we check the name of the object that was just created.
-        if instance and self.State.Blacklist[instance.Name] then
-             warn("--> [InstanceInterceptor] Blocked creation of blacklisted instance: " .. instance.Name)
-             pcall(instance.Destroy, instance) -- Destroy it immediately
+        if instance and module.State.Blacklist[instance.Name] then
+             print("--> [InstanceInterceptor] Blocked creation of blacklisted instance: " .. instance.Name)
+             pcall(instance.Destroy, instance)
              return nil
         end
         
@@ -13149,7 +13149,7 @@ end
 function Modules.InstanceInterceptor:Disable(): ()
     if not self.State.IsEnabled then return end
     if self.State.OriginalNew and unhookfunction then
-        unhookfunction(Instance.new)
+        pcall(unhookfunction, Instance.new)
         self.State.OriginalNew = nil
     end
     self.State.IsEnabled = false
@@ -13157,7 +13157,6 @@ function Modules.InstanceInterceptor:Disable(): ()
 end
 
 function Modules.InstanceInterceptor:Initialize(): ()
-    -- Enable this by default as it's a powerful passive defense
     self:Enable()
 
     RegisterCommand({
