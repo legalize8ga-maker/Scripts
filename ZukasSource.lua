@@ -12004,6 +12004,112 @@ function Modules.GripEditor:Initialize()
     end)
 end
 
+Modules.RemoteMiddleware = {
+    State = {
+        IsEnabled = false,
+        OriginalNamecall = nil,
+        Filters = {} -- ["Remote.Path"] = function
+    }
+}
+
+function Modules.RemoteMiddleware:Enable(): ()
+    if self.State.IsEnabled then return end
+    if not (getrawmetatable and getnamecallmethod and newcclosure) then 
+        return DoNotif("Executor does not support __namecall hooks.", 4) 
+    end
+
+    local mt = getrawmetatable(game)
+    self.State.OriginalNamecall = mt.__namecall
+    local original_nc = self.State.OriginalNamecall
+
+    setreadonly(mt, false)
+    mt.__namecall = newcclosure(function(...)
+        local args = {...}
+        local selfArg = args[1]
+        local method = getnamecallmethod()
+        
+        if (selfArg:IsA("RemoteEvent") or selfArg:IsA("RemoteFunction")) then
+            local path = selfArg:GetFullName()
+            local filterFunc = self.State.Filters[path]
+
+            if filterFunc then
+                table.remove(args, 1) -- Remove self from arg list
+                
+                local success, modifiedArgs = pcall(filterFunc, unpack(args))
+
+                if success then
+                    warn("--> [Middleware] Filtered call to " .. path)
+                    return original_nc(selfArg, unpack(modifiedArgs))
+                else
+                    warn("--> [Middleware] Error in filter for " .. path .. ":", modifiedArgs)
+                end
+            end
+        end
+
+        return original_nc(...)
+    end)
+    setreadonly(mt, true)
+
+    self.State.IsEnabled = true
+    DoNotif("Remote Middleware: ENABLED", 2)
+end
+
+function Modules.RemoteMiddleware:Disable(): ()
+    if not self.State.IsEnabled then return end
+    if self.State.OriginalNamecall then
+        pcall(function()
+            local mt = getrawmetatable(game)
+            setreadonly(mt, false)
+            mt.__namecall = self.State.OriginalNamecall
+            setreadonly(mt, true)
+        end)
+    end
+    self.State.IsEnabled = false
+    self.State.OriginalNamecall = nil
+    DoNotif("Remote Middleware: DISABLED", 2)
+end
+
+function Modules.RemoteMiddleware:Initialize(): ()
+    self:Enable() -- Enable by default as it's a passive hook until a filter is added.
+
+    RegisterCommand({
+        Name = "filterremote",
+        Aliases = {"finesse", "midware"},
+        Description = "Applies a function to modify remote arguments before they are sent."
+    }, function(args)
+        local path = args[1]
+        if not path then return DoNotif("Usage: ;filterremote <path> <function_string>", 4) end
+        
+        table.remove(args, 1)
+        local funcStr = table.concat(args, " ")
+        
+        local success, filterFunc = pcall(loadstring, "return " .. funcStr)
+        
+        if success and typeof(filterFunc) == "function" then
+            self.State.Filters[path] = filterFunc()
+            DoNotif("Filter set for: " .. path, 3)
+        else
+            DoNotif("Invalid function string. Error: " .. tostring(filterFunc), 5)
+        end
+    end)
+
+    RegisterCommand({
+        Name = "clearfilter",
+        Aliases = {"unfilter"},
+        Description = "Removes a middleware filter from a remote."
+    }, function(args)
+        local path = args[1]
+        if not path then return DoNotif("Usage: ;clearfilter <path>", 3) end
+
+        if self.State.Filters[path] then
+            self.State.Filters[path] = nil
+            DoNotif("Filter cleared for: " .. path, 2)
+        else
+            DoNotif("No filter was active for that path.", 2)
+        end
+    end)
+end
+
 Modules.AnimationBuilder = {
     State = {
         UI = nil, 
