@@ -251,54 +251,60 @@ local function loadAimbotGUI(args)
 		
 		local janitor = {}
 
-        local function SetupSilentAimHook()
-            if not (getrawmetatable and setreadonly and newcclosure and getnamecallmethod) then
-                warn("Zuka's Analysis: Silent Aim dependencies (e.g., getrawmetatable) not found in this environment. Silent Aim will be disabled.")
-                return function() end
-            end
+local function SetupSilentAimHook(): () -> ()
+    if not (getrawmetatable and setreadonly and newcclosure and getnamecallmethod) then
+        warn("Zuka's Analysis: Silent Aim dependencies (e.g., getrawmetatable) not found. Silent Aim will be disabled.")
+        return function() end
+    end
 
-            local gameMetatable = getrawmetatable(game)
-            local originalNamecall = gameMetatable.__namecall
-            
-            pcall(function()
-                setreadonly(gameMetatable, false)
-                gameMetatable.__namecall = newcclosure(function(...)
-                    local args = {...}
-                    local self = args[1]
-                    local method = getnamecallmethod()
+    local gameMetatable: {} = getrawmetatable(game)
+    local originalNamecall = gameMetatable.__namecall
+    
+    local success, err = pcall(function()
+        setreadonly(gameMetatable, false)
+        gameMetatable.__namecall = newcclosure(function(...)
+            local args: {any} = {...}
+            local self: Instance = args[1]
+            local method: string = getnamecallmethod()
+            local targetPosition: Vector3 = getgenv().ZukaSilentAimTarget
 
-                    if getgenv().silentAimEnabled and getgenv().ZukaSilentAimTarget and self == game:GetService("Workspace") then
-                        if method == "Raycast" then
-                            local origin, direction = args[2], args[3]
-                            if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-                                local newDirection = (getgenv().ZukaSilentAimTarget - origin).Unit * direction.Magnitude
-                                args[3] = newDirection
-                                return originalNamecall(unpack(args))
-                            end
-                        end
-                        if method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
-                            local rayArg = args[2]
-                            if typeof(rayArg) == "Ray" then
-                                local newRay = Ray.new(rayArg.Origin, (getgenv().ZukaSilentAimTarget - rayArg.Origin).Unit * 1000)
-                                args[2] = newRay
-                                return originalNamecall(unpack(args))
-                            end
-                        end
+            if getgenv().silentAimEnabled and targetPosition and self == Workspace then
+                if method == "Raycast" then
+                    local origin: any, direction: any = args[2], args[3]
+                    if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+                        local newDirection: Vector3 = (targetPosition - origin).Unit * direction.Magnitude
+                        args[3] = newDirection
                     end
-                    
-                    return originalNamecall(...)
-                end)
-                setreadonly(gameMetatable, true)
-            end)
-
-            return function()
-                pcall(function()
-                    setreadonly(gameMetatable, false)
-                    gameMetatable.__namecall = originalNamecall
-                    setreadonly(gameMetatable, true)
-                end)
+                elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
+                    local rayArg: any = args[2]
+                    if typeof(rayArg) == "Ray" then
+                        local newRay: Ray = Ray.new(rayArg.Origin, (targetPosition - rayArg.Origin).Unit * 1000)
+                        args[2] = newRay
+                    end
+                end
             end
-        end
+            
+            return originalNamecall(unpack(args))
+        end)
+        setreadonly(gameMetatable, true)
+    end)
+
+    if not success then
+        warn("Zuka's Analysis: Failed to hook __namecall.", err)
+        pcall(setreadonly, gameMetatable, false)
+        gameMetatable.__namecall = originalNamecall
+        pcall(setreadonly, gameMetatable, true)
+        return function() end
+    end
+
+    return function()
+        pcall(function()
+            setreadonly(gameMetatable, false)
+            gameMetatable.__namecall = originalNamecall
+            setreadonly(gameMetatable, true)
+        end)
+    end
+end
 
 		local cleanupSilentAimHook = SetupSilentAimHook()
 
@@ -4590,6 +4596,99 @@ RegisterCommand({
 }, function()
     Modules.AdvancedAirwalk:Disable()
 end)
+
+
+Modules.AntiDestroy = {
+    State = {
+        IsEnabled = false,
+        OriginalNamecall = nil,
+        ProtectedNames = {} 
+    }
+}
+
+function Modules.AntiDestroy:Enable(): ()
+    if self.State.IsEnabled then return end
+
+    local success, mt = pcall(getrawmetatable, game)
+    if not success or typeof(mt) ~= "table" then
+        warn("AntiDestroy: Failed to get game metatable. Hooking is not possible.")
+        return
+    end
+
+    self.State.OriginalNamecall = mt.__namecall
+    local original_nc = self.State.OriginalNamecall 
+
+    setreadonly(mt, false)
+    mt.__namecall = newcclosure(function(...)
+        local selfArg: Instance = select(1, ...)
+        local method: string = getnamecallmethod()
+
+        if method == "Destroy" and self.State.ProtectedNames[selfArg.Name] then
+            warn("AntiDestroy: Blocked Destroy() call on protected instance -> " .. selfArg:GetFullName())
+            return
+        end
+        
+        return original_nc(...)
+    end)
+    setreadonly(mt, true)
+
+    self.State.IsEnabled = true
+    DoNotif("Anti-Destroy Hook: ENABLED", 2)
+end
+
+function Modules.AntiDestroy:Disable(): ()
+    if not self.State.IsEnabled then return end
+
+    if self.State.OriginalNamecall then
+        local success, err = pcall(function()
+            local mt = getrawmetatable(game)
+            setreadonly(mt, false)
+            mt.__namecall = self.State.OriginalNamecall
+            setreadonly(mt, true)
+        end)
+        if not success then
+            warn("AntiDestroy: Failed to restore original __namecall.", err)
+        end
+    end
+
+    self.State.IsEnabled = false
+    self.State.OriginalNamecall = nil
+    DoNotif("Anti-Destroy Hook: DISABLED", 2)
+end
+
+function Modules.AntiDestroy:Initialize(): ()
+    self:Enable() 
+
+    RegisterCommand({
+        Name = "protect",
+        Aliases = {"antidelete"},
+        Description = "Protects an instance from being destroyed by its name."
+    }, function(args: {string})
+        local name = args[1]
+        if not name then
+            return DoNotif("Usage: ;protect <InstanceName>", 3)
+        end
+        self.State.ProtectedNames[name] = true
+        DoNotif("Protection enabled for all instances named: " .. name, 3)
+    end)
+
+    RegisterCommand({
+        Name = "unprotect",
+        Aliases = {"allowdelete"},
+        Description = "Removes destruction protection from an instance by its name."
+    }, function(args: {string})
+        local name = args[1]
+        if not name then
+            return DoNotif("Usage: ;unprotect <InstanceName>", 3)
+        end
+        if self.State.ProtectedNames[name] then
+            self.State.ProtectedNames[name] = nil
+            DoNotif("Protection removed for instances named: " .. name, 3)
+        else
+            DoNotif("No protection was active for that name.", 2)
+        end
+    end)
+end
 
 Modules.Blackhole = {
     State = {
@@ -10336,249 +10435,324 @@ function Modules.SuperPush:_cleanupCharacter(character)
                         end
                     end)
                 end
-                Modules.RemoteSpy = {
-                State = {
-                IsEnabled = false,
-                UI = nil,
-                OriginalNamecall = nil,
-                BlockedRemotes = {}
-                }
-                }
-                function Modules.RemoteSpy:Toggle()
-                    if self.State.IsEnabled then
-                        pcall(function()
-                        local mt = getrawmetatable(game)
-                        if mt and self.State.OriginalNamecall then
-                            setreadonly(mt, false)
-                            mt.__namecall = self.State.OriginalNamecall
-                            setreadonly(mt, true)
-                        end
-                        if self.State.UI then
-                            self.State.UI:Destroy()
-                        end
-                    end)
-                    self.State.IsEnabled = false
-                    self.State.UI = nil
-                    self.State.OriginalNamecall = nil
-                    table.clear(self.State.BlockedRemotes)
-                    DoNotif("RemoteSpy Disabled.", 2)
-                    return
-                end
-                self.State.IsEnabled = true
-                DoNotif("RemoteSpy Enabled.", 2)
-                local CoreGui = game:GetService("CoreGui")
-                local UserInputService = game:GetService("UserInputService")
-                local CONFIG = {
-                UI_TITLE = "Zuka's RemoteSpy",
-                PRIMARY_COLOR = Color3.fromRGB(0, 255, 255),
-                BACKGROUND_COLOR = Color3.fromRGB(30, 30, 40),
-                FONT = Enum.Font.GothamSemibold
-                }
-                local remoteSpyGui = Instance.new("ScreenGui")
-                remoteSpyGui.Name = "RemoteSpy_" .. math.random(1000, 9999)
-                remoteSpyGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
-                remoteSpyGui.ResetOnSpawn = false
-                self.State.UI = remoteSpyGui
-                local mainFrame = Instance.new("Frame")
-                mainFrame.Size = UDim2.fromOffset(500, 350)
-                mainFrame.Position = UDim2.fromScale(0.5, 0.5)
-                mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-                mainFrame.BackgroundColor3 = CONFIG.BACKGROUND_COLOR
-                mainFrame.BorderSizePixel = 0
-                mainFrame.ClipsDescendants = true
-                mainFrame.Parent = remoteSpyGui
-                Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 6)
-                local stroke = Instance.new("UIStroke", mainFrame)
-                stroke.Color = CONFIG.PRIMARY_COLOR
-                stroke.Thickness = 1.5
-                stroke.Transparency = 0.4
-                local titleBar = Instance.new("Frame")
-                titleBar.Size = UDim2.new(1, 0, 0, 30)
-                titleBar.BackgroundColor3 = CONFIG.PRIMARY_COLOR
-                titleBar.BackgroundTransparency = 0.85
-                titleBar.Parent = mainFrame
-                local titleLabel = Instance.new("TextLabel", titleBar)
-                titleLabel.Size = UDim2.new(1, -60, 1, 0)
-                titleLabel.Position = UDim2.fromOffset(10, 0)
-                titleLabel.BackgroundTransparency = 1
-                titleLabel.Font = CONFIG.FONT
-                titleLabel.Text = CONFIG.UI_TITLE
-                titleLabel.TextColor3 = Color3.new(1, 1, 1)
-                titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-                titleLabel.TextSize = 16
-                local exitButton = Instance.new("TextButton", titleBar)
-                exitButton.Size = UDim2.fromOffset(30, 30)
-                exitButton.Position = UDim2.new(1, 0, 0, 0)
-                exitButton.AnchorPoint = Vector2.new(1, 0)
-                exitButton.BackgroundColor3 = Color3.fromRGB(255, 70, 70)
-                exitButton.BackgroundTransparency = 0.5
-                exitButton.Font = CONFIG.FONT
-                exitButton.Text = "X"
-                exitButton.TextColor3 = Color3.new(1, 1, 1)
-                local minimizeButton = Instance.new("TextButton", titleBar)
-                minimizeButton.Size = UDim2.fromOffset(30, 30)
-                minimizeButton.Position = UDim2.new(1, -30, 0, 0)
-                minimizeButton.AnchorPoint = Vector2.new(1, 0)
-                minimizeButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-                minimizeButton.BackgroundTransparency = 0.5
-                minimizeButton.Font = CONFIG.FONT
-                minimizeButton.Text = "-"
-                minimizeButton.TextColor3 = Color3.new(1, 1, 1)
-                local contentFrame = Instance.new("Frame")
-                contentFrame.Size = UDim2.new(1, 0, 1, -30)
-                contentFrame.Position = UDim2.fromOffset(0, 30)
-                contentFrame.BackgroundTransparency = 1
-                contentFrame.Parent = mainFrame
-                local scrollingFrame = Instance.new("ScrollingFrame")
-                scrollingFrame.Size = UDim2.new(1, -10, 1, -10)
-                scrollingFrame.Position = UDim2.fromScale(0.5, 0.5)
-                scrollingFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-                scrollingFrame.BackgroundColor3 = CONFIG.BACKGROUND_COLOR
-                scrollingFrame.BackgroundTransparency = 0.5
-                scrollingFrame.BorderSizePixel = 0
-                scrollingFrame.ScrollBarThickness = 5
-                scrollingFrame.Parent = contentFrame
-                local listLayout = Instance.new("UIListLayout", scrollingFrame)
-                listLayout.Padding = UDim.new(0, 5)
-                local entryTemplate = Instance.new("Frame")
-                entryTemplate.Name = "EntryTemplate"
-                entryTemplate.Size = UDim2.new(1, -4, 0, 60)
-                entryTemplate.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
-                entryTemplate.BorderSizePixel = 0
-                local pathLabel = Instance.new("TextLabel", entryTemplate)
-                pathLabel.Size = UDim2.new(1, -10, 0, 20)
-                pathLabel.Position = UDim2.fromOffset(5, 2)
-                pathLabel.BackgroundTransparency = 1
-                pathLabel.Font = Enum.Font.Code
-                pathLabel.TextColor3 = CONFIG.PRIMARY_COLOR
-                pathLabel.TextXAlignment = Enum.TextXAlignment.Left
-                pathLabel.TextSize = 13
-                pathLabel.ClipsDescendants = true
-                local argsLabel = Instance.new("TextLabel", entryTemplate)
-                argsLabel.Size = UDim2.new(1, -10, 0, 14)
-                argsLabel.Position = UDim2.fromOffset(5, 22)
-                argsLabel.BackgroundTransparency = 1
-                argsLabel.Font = Enum.Font.Code
-                argsLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-                argsLabel.TextXAlignment = Enum.TextXAlignment.Left
-                argsLabel.TextSize = 12
-                argsLabel.ClipsDescendants = true
-                local fireButton = Instance.new("TextButton", entryTemplate)
-                fireButton.Size = UDim2.fromOffset(60, 20)
-                fireButton.Position = UDim2.new(1, -135, 1, -25)
-                fireButton.AnchorPoint = Vector2.new(0, 1)
-                fireButton.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
-                fireButton.Font = Enum.Font.Gotham
-                fireButton.Text = "Fire"
-                fireButton.TextColor3 = Color3.white
-                local blockButton = Instance.new("TextButton", entryTemplate)
-                blockButton.Size = UDim2.fromOffset(60, 20)
-                blockButton.Position = UDim2.new(1, -65, 1, -25)
-                blockButton.AnchorPoint = Vector2.new(0, 1)
-                blockButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-                blockButton.Font = Enum.Font.Gotham
-                blockButton.Text = "Block"
-                blockButton.TextColor3 = Color3.white
-                local module = self
-                exitButton.MouseButton1Click:Connect(function()
-                module:Toggle()
-            end)
-            do
-                local isMinimized = false
-                minimizeButton.MouseButton1Click:Connect(function()
-                isMinimized = not isMinimized
-                contentFrame.Visible = not isMinimized
-                minimizeButton.Text = isMinimized and "+" or "-"
-                mainFrame.Size = isMinimized and UDim2.fromOffset(200, 30) or UDim2.fromOffset(500, 350)
-            end)
-        end
-        do
-            titleBar.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                local dragStart = input.Position
-                local startPos = mainFrame.Position
-                local moveConn, endConn
-                moveConn = UserInputService.InputChanged:Connect(function(moveInput)
-                if moveInput.UserInputType == Enum.UserInputType.MouseMovement then
-                    local delta = moveInput.Position - dragStart
-                    mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-                end
-            end)
-            endConn = UserInputService.InputEnded:Connect(function(endInput)
-            if endInput.UserInputType == Enum.UserInputType.MouseButton1 then
-                moveConn:Disconnect()
-                endConn:Disconnect()
+Modules.RemoteSpy = {
+    State = {
+        IsEnabled = false,
+        UI = nil,
+        OriginalNamecall = nil,
+        BlockedRemotes = {}, -- {["Remote.Path"] = true}
+        LoggedRemotes = {}, -- {["Remote.Path"] = {Remote, {CallHistory}}}
+        SelectedRemotePath = nil
+    }
+}
+
+function Modules.RemoteSpy:_readTable(tbl: table): string
+    local function serialize(value: any, indent: number, visited: {[table]: boolean}): string
+        local valueType: string = typeof(value)
+        if visited[value] and valueType == "table" then return '"*Circular Reference*"' end
+
+        if valueType == "string" then
+            return string.format("%q", value)
+        elseif valueType == "number" or valueType == "boolean" or valueType == "nil" then
+            return tostring(value)
+        elseif valueType == "Instance" then
+            return string.format('"%s (%s)"', value:GetFullName(), value.ClassName)
+        elseif valueType == "function" or valueType == "thread" or valueType == "userdata" then
+            return string.format('"<%s>"', valueType)
+        elseif valueType == "table" then
+            visited[value] = true
+            local parts = {}
+            local isArray = true
+            for i = 1, #value do
+                table.insert(parts, serialize(value[i], indent + 1, visited))
             end
-        end)
+             for k, v in pairs(value) do
+                if type(k) ~= "number" or k < 1 or k > #value or k % 1 ~= 0 then
+                    isArray = false
+                    break
+                end
+            end
+            if not isArray then
+                parts = {}
+                for k, v in pairs(value) do
+                    local keyStr = (typeof(k) == "string" and string.format("[%q]", k)) or string.format("[%s]", tostring(k))
+                    table.insert(parts, string.format("%s = %s", keyStr, serialize(v, indent + 1, visited)))
+                end
+            end
+            local final = "{" .. table.concat(parts, ", ") .. "}"
+            visited[value] = false
+            return final
+        else
+            return tostring(value)
+        end
     end
-end)
+    return serialize(tbl, 0, {})
 end
-local function serializeArguments(args)
-local serialized = {}
-for _, v in ipairs(args) do
-    local t = typeof(v)
-    if t == "string" then table.insert(serialized, string.format("%q", v))
-    elseif t == "Instance" then table.insert(serialized, v:GetFullName())
-elseif t == "table" then table.insert(serialized, "{...}")
-else table.insert(serialized, tostring(v)) end
+
+function Modules.RemoteSpy:_destroyUI()
+    if self.State.UI and self.State.UI.ScreenGui then
+        self.State.UI.ScreenGui:Destroy()
+    end
+    self.State.UI = nil
+    self.State.SelectedRemotePath = nil
+    self.State.LoggedRemotes = {}
 end
-return "{" .. table.concat(serialized, ", ") .. "}"
+
+function Modules.RemoteSpy:_addRemoteToList(remote: Instance)
+    if not self.State.UI then return end
+    local path = remote:GetFullName()
+    if self.State.LoggedRemotes[path] then return end
+
+    self.State.LoggedRemotes[path] = {Remote = remote, Calls = {}}
+    
+    local btn = Instance.new("TextButton")
+    btn.Name = path
+    btn.Size = UDim2.new(1, 0, 0, 22)
+    btn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.Text = "  " .. remote.Name .. " (" .. remote.ClassName .. ")"
+    btn.Font = Enum.Font.Code
+    btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.Parent = self.State.UI.RemoteList
+    btn.MouseButton1Click:Connect(function() self:_selectRemote(path) end)
 end
-local function logRemote(remote, args)
-local fullName = remote:GetFullName()
-local entry = entryTemplate:Clone()
-local remoteType = remote:IsA("RemoteEvent") and "EVENT" or "FUNCTION"
-entry.pathLabel.Text = string.format("[%s] %s", remoteType, fullName)
-entry.argsLabel.Text = serializeArguments(args)
-entry.Parent = scrollingFrame
-entry.fireButton.MouseButton1Click:Connect(function()
-if remote and remote.Parent then
-    if remoteType == "EVENT" then
-        remote:FireServer(unpack(args))
+
+function Modules.RemoteSpy:_fullScan()
+    local scanButton = self.State.UI.ScanButton
+    if scanButton.Text == "Scanning..." then return end
+
+    scanButton.Text = "Scanning..."
+    local self = self 
+    task.spawn(function()
+        for _, obj in ipairs(game:GetDescendants()) do
+            if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+                self:_addRemoteToList(obj)
+            end
+        end
+        scanButton.Text = "Full Scan Complete"
+        task.wait(3)
+        if scanButton and scanButton.Parent then
+           scanButton.Text = "Perform Full Scan"
+        end
+    end)
+end
+
+function Modules.RemoteSpy:_createUI()
+    self:_destroyUI()
+    self.State.UI = {}
+    local ui = self.State.UI
+
+    local Theme = { Primary = Color3.fromRGB(255, 105, 180), Background = Color3.fromRGB(34, 32, 38), Header = Color3.fromRGB(28, 26, 32), Interactive = Color3.fromRGB(45, 45, 55), Text = Color3.fromRGB(240, 240, 240) }
+
+    ui.ScreenGui = Instance.new("ScreenGui"); ui.ScreenGui.Name = "RemoteSpy_Zuka"; ui.ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global; ui.ScreenGui.ResetOnSpawn = false
+    
+    local mainFrame = Instance.new("Frame", ui.ScreenGui); mainFrame.Size = UDim2.fromOffset(700, 450); mainFrame.Position = UDim2.fromScale(0.5, 0.5); mainFrame.AnchorPoint = Vector2.new(0.5, 0.5); mainFrame.BackgroundColor3 = Theme.Background; mainFrame.Active = true
+    Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8) -- [FIX] Corrected UDim2 to UDim
+    Instance.new("UIStroke", mainFrame).Color = Theme.Primary
+    
+    local titleBar = Instance.new("Frame", mainFrame); titleBar.Size = UDim2.new(1, 0, 0, 30); titleBar.BackgroundColor3 = Theme.Header
+    local title = Instance.new("TextLabel", titleBar); title.Size = UDim2.new(1, 0, 1, 0); title.BackgroundTransparency = 1; title.Position = UDim2.fromOffset(15, 0); title.Text = "Zuka's Remote Interactor"; title.Font = Enum.Font.GothamSemibold; title.TextColor3 = Theme.Text; title.TextSize = 16; title.TextXAlignment = Enum.TextXAlignment.Left
+    local closeButton = Instance.new("TextButton", titleBar); closeButton.Size = UDim2.fromOffset(30, 30); closeButton.Position = UDim2.new(1, 0, 0, 0); closeButton.AnchorPoint = Vector2.new(1, 0); closeButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50); closeButton.Text = "X"; closeButton.Font = Enum.Font.GothamBold; closeButton.TextColor3 = Color3.new(1, 1, 1)
+    
+    local leftPanel = Instance.new("Frame", mainFrame); leftPanel.Size = UDim2.new(0.4, 0, 1, -30); leftPanel.Position = UDim2.fromOffset(0, 30); leftPanel.BackgroundTransparency = 1
+    ui.ScanButton = Instance.new("TextButton", leftPanel); ui.ScanButton.Size = UDim2.new(1, 0, 0, 30); ui.ScanButton.BackgroundColor3 = Theme.Interactive; ui.ScanButton.Text = "Perform Full Scan"; ui.ScanButton.Font = Enum.Font.Gotham; ui.ScanButton.TextColor3 = Theme.Text
+    
+    local remoteListScroll = Instance.new("ScrollingFrame", leftPanel); remoteListScroll.Size = UDim2.new(1, 0, 1, -35); remoteListScroll.Position = UDim2.fromOffset(0, 35); remoteListScroll.BackgroundTransparency = 1; remoteListScroll.BorderSizePixel = 0; remoteListScroll.ScrollBarThickness = 4; remoteListScroll.ScrollBarImageColor3 = Theme.Primary
+    ui.RemoteList = Instance.new("UIListLayout", remoteListScroll); ui.RemoteList.Padding = UDim.new(0, 3); ui.RemoteList.SortOrder = Enum.SortOrder.Name
+    
+    local rightPanel = Instance.new("Frame", mainFrame); rightPanel.Size = UDim2.new(0.6, 0, 1, -30); rightPanel.Position = UDim2.new(0.4, 0, 0, 30); rightPanel.BackgroundTransparency = 1
+    Instance.new("UIPadding", rightPanel).PaddingLeft = UDim.new(0, 10)
+    
+    ui.SelectedRemoteLabel = Instance.new("TextLabel", rightPanel); ui.SelectedRemoteLabel.Size = UDim2.new(1, -20, 0, 20); ui.SelectedRemoteLabel.BackgroundTransparency = 1; ui.SelectedRemoteLabel.Font = Enum.Font.Code; ui.SelectedRemoteLabel.Text = "No remote selected..."; ui.SelectedRemoteLabel.TextColor3 = Theme.Text; ui.SelectedRemoteLabel.TextXAlignment = Enum.TextXAlignment.Left
+    
+    ui.CallHistory = Instance.new("ScrollingFrame", rightPanel); ui.CallHistory.Size = UDim2.new(1, -20, 0.4, 0); ui.CallHistory.Position = UDim2.fromOffset(0, 25); ui.CallHistory.BackgroundColor3 = Theme.Header; ui.CallHistory.BorderSizePixel = 0; ui.CallHistory.ScrollBarThickness = 4; ui.CallHistory.ScrollBarImageColor3 = Theme.Primary
+    Instance.new("UIListLayout", ui.CallHistory).Padding = UDim.new(0, 2)
+    
+    ui.InteractorFrame = Instance.new("ScrollingFrame", rightPanel); ui.InteractorFrame.Size = UDim2.new(1, -20, 0.4, -5); ui.InteractorFrame.Position = UDim2.new(0, 0, 0.4, 30); ui.InteractorFrame.BackgroundColor3 = Theme.Header; ui.InteractorFrame.BorderSizePixel = 0
+    Instance.new("UIListLayout", ui.InteractorFrame).Padding = UDim.new(0, 5)
+
+    local fireButton = Instance.new("TextButton", rightPanel); fireButton.Size = UDim2.new(0.5, -15, 0, 30); fireButton.Position = UDim2.new(0, 0, 1, -35); fireButton.BackgroundColor3 = Color3.fromRGB(50, 180, 50); fireButton.Text = "Fire / Invoke"; fireButton.Font = Enum.Font.GothamBold; fireButton.TextColor3 = Color3.new(1, 1, 1)
+    local blockButton = fireButton:Clone(); blockButton.Position = UDim2.new(0.5, 5, 1, -35); blockButton.Text = "Block Remote"; blockButton.BackgroundColor3 = Color3.fromRGB(180, 50, 50); blockButton.Parent = rightPanel
+    ui.BlockButton = blockButton
+    ui.ResultBox = Instance.new("TextLabel", rightPanel); ui.ResultBox.Size = UDim2.new(1, -20, 0, 25); ui.ResultBox.Position = UDim2.new(0, 0, 1, -5); ui.ResultBox.BackgroundTransparency = 1; ui.ResultBox.Font = Enum.Font.Code; ui.ResultBox.TextColor3 = Theme.Primary; ui.ResultBox.Text = ""; ui.ResultBox.TextXAlignment = Enum.TextXAlignment.Left
+
+    closeButton.MouseButton1Click:Connect(function() self:Toggle() end)
+    ui.ScanButton.MouseButton1Click:Connect(function() self:_fullScan() end)
+    fireButton.MouseButton1Click:Connect(function() self:_fireFromInteractor() end)
+    blockButton.MouseButton1Click:Connect(function() self:_toggleBlockSelected() end)
+
+    local isDragging, dragStart, startPos = false, nil, nil
+    titleBar.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDragging, dragStart, startPos = true, input.Position, mainFrame.Position end end)
+    game:GetService("UserInputService").InputChanged:Connect(function(input) if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement then local delta = input.Position - dragStart; mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y) end end)
+    game:GetService("UserInputService").InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDragging = false end end)
+    
+    ui.ScreenGui.Parent = game:GetService("CoreGui")
+end
+
+function Modules.RemoteSpy:_logRemoteCall(remote: Instance, args: {any})
+    if not self.State.UI then return end
+    
+    self:_addRemoteToList(remote)
+    local path = remote:GetFullName()
+    
+    table.insert(self.State.LoggedRemotes[path].Calls, 1, args)
+    if #self.State.LoggedRemotes[path].Calls > 20 then
+        table.remove(self.State.LoggedRemotes[path].Calls)
+    end
+
+    if self.State.SelectedRemotePath == path then
+        self:_updateCallHistory()
+    end
+end
+
+function Modules.RemoteSpy:_selectRemote(path: string)
+    self.State.SelectedRemotePath = path
+    self.State.UI.SelectedRemoteLabel.Text = path
+    self.State.UI.ResultBox.Text = ""
+    self.State.UI.BlockButton.Text = self.State.BlockedRemotes[path] and "Unblock Remote" or "Block Remote"
+    self:_updateCallHistory()
+    if #self.State.LoggedRemotes[path].Calls > 0 then
+        self:_populateInteractor(self.State.LoggedRemotes[path].Calls[1])
     else
-    pcall(remote.InvokeServer, remote, unpack(args))
-end
-end
-end)
-entry.blockButton.MouseButton1Click:Connect(function()
-module.State.BlockedRemotes[fullName] = true
-entry.blockButton.Text = "Blocked"
-entry.blockButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-entry.blockButton.AutoButtonColor = false
-end)
-scrollingFrame.CanvasPosition = Vector2.new(0, listLayout.AbsoluteContentSize.Y)
-end
-local mt = getrawmetatable(game)
-self.State.OriginalNamecall = mt.__namecall
-setreadonly(mt, false)
-mt.__namecall = function(...)
-local args = {...}
-local selfArg = args[1]
-local method = getnamecallmethod()
-if (selfArg:IsA("RemoteEvent") and method == "FireServer") or (selfArg:IsA("RemoteFunction") and method == "InvokeServer") then
-    local fullName = selfArg:GetFullName()
-    if module.State.BlockedRemotes[fullName] then
-        return
+        self:_populateInteractor({})
     end
-    local callArgs = {}
-    for i = 2, #args do table.insert(callArgs, args[i]) end
-        logRemote(selfArg, callArgs)
+end
+
+function Modules.RemoteSpy:_updateCallHistory()
+    if not self.State.SelectedRemotePath then return end
+    local history = self.State.UI.CallHistory
+    for _, v in ipairs(history:GetChildren()) do if v:IsA("UIListLayout") then continue end v:Destroy() end
+    
+    local logData = self.State.LoggedRemotes[self.State.SelectedRemotePath]
+    if not logData then return end
+
+    for i, callArgs in ipairs(logData.Calls) do
+        local callBtn = Instance.new("TextButton")
+        callBtn.Size = UDim2.new(1, 0, 0, 20)
+        callBtn.BackgroundColor3 = Color3.fromRGB(40,40,50)
+        callBtn.TextColor3 = Color3.new(0.8, 0.8, 0.9)
+        callBtn.Text = " Call #" .. i .. ": " .. self:_readTable(callArgs)
+        callBtn.Font = Enum.Font.Code
+        callBtn.TextSize = 12
+        callBtn.TextXAlignment = Enum.TextXAlignment.Left
+        callBtn.Parent = history
+        callBtn.MouseButton1Click:Connect(function() self:_populateInteractor(callArgs) end)
     end
-    return module.State.OriginalNamecall(...)
 end
-setreadonly(mt, true)
-remoteSpyGui.Parent = CoreGui
+
+function Modules.RemoteSpy:_populateInteractor(args)
+    if not self.State.UI then return end
+    local interactor = self.State.UI.InteractorFrame
+    for _, v in ipairs(interactor:GetChildren()) do if v:IsA("UIListLayout") then continue end v:Destroy() end
+
+    if not args then return end
+    for i, arg in ipairs(args) do
+        local input = Instance.new("TextBox")
+        input.Size = UDim2.new(1, -10, 0, 25)
+        input.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+        input.TextColor3 = Color3.new(1, 1, 1)
+        input.Font = Enum.Font.Code
+        input.Text = self:_readTable({arg}):sub(2, -2) 
+        input.ClearTextOnFocus = false
+        input.Parent = interactor
+    end
 end
+
+function Modules.RemoteSpy:_fireFromInteractor()
+    if not self.State.SelectedRemotePath then return end
+    local remote = self.State.LoggedRemotes[self.State.SelectedRemotePath].Remote
+    if not remote or not remote.Parent then self.State.UI.ResultBox.Text = "Error: Remote is nil."; return end
+
+    local args = {}
+    for _, input in ipairs(self.State.UI.InteractorFrame:GetChildren()) do
+        if input:IsA("TextBox") then
+            local success, result = pcall(function() return loadstring("return " .. input.Text)() end)
+            if success then table.insert(args, result) else table.insert(args, input.Text) end
+        end
+    end
+
+    if remote:IsA("RemoteEvent") then
+        remote:FireServer(unpack(args))
+        self.State.UI.ResultBox.Text = "Fired RemoteEvent."
+    elseif remote:IsA("RemoteFunction") then
+        local success, result = pcall(remote.InvokeServer, remote, unpack(args))
+        if success then
+            self.State.UI.ResultBox.Text = "Result: " .. self:_readTable({result}):sub(2, -2)
+        else
+            self.State.UI.ResultBox.Text = "Error: " .. tostring(result)
+        end
+    end
+end
+
+function Modules.RemoteSpy:_toggleBlockSelected()
+    if not self.State.SelectedRemotePath then return end
+    local path = self.State.SelectedRemotePath
+    if self.State.BlockedRemotes[path] then
+        self.State.BlockedRemotes[path] = nil
+        self.State.UI.BlockButton.Text = "Block Remote"
+        DoNotif("Unblocked: " .. path, 2)
+    else
+        self.State.BlockedRemotes[path] = true
+        self.State.UI.BlockButton.Text = "Unblock Remote"
+        DoNotif("Blocked: " .. path, 2)
+    end
+end
+
+function Modules.RemoteSpy:_hookNamecall()
+    if not (getrawmetatable and getnamecallmethod) then DoNotif("RemoteSpy: Executor does not support hooks.", 5); return end
+    local mt = getrawmetatable(game)
+    self.State.OriginalNamecall = mt.__namecall
+    setreadonly(mt, false)
+    mt.__namecall = newcclosure(function(...)
+        local selfArg = select(1, ...)
+        local method = getnamecallmethod()
+        if (selfArg:IsA("RemoteEvent") and method == "FireServer") or (selfArg:IsA("RemoteFunction") and method == "InvokeServer") then
+            if self.State.BlockedRemotes[selfArg:GetFullName()] then
+                print("--> [RemoteSpy] Blocked call to:", selfArg:GetFullName())
+                return
+            end
+            local args = {...}; table.remove(args, 1)
+            self:_logRemoteCall(selfArg, args)
+        end
+        return self.State.OriginalNamecall(...)
+    end)
+    setreadonly(mt, true)
+end
+
+function Modules.RemoteSpy:_unhookNamecall()
+    if not self.State.OriginalNamecall then return end
+    pcall(function()
+        local mt = getrawmetatable(game)
+        setreadonly(mt, false)
+        mt.__namecall = self.State.OriginalNamecall
+        setreadonly(mt, true)
+    end)
+    self.State.OriginalNamecall = nil
+end
+
+function Modules.RemoteSpy:Toggle()
+    self.State.IsEnabled = not self.State.IsEnabled
+    if self.State.IsEnabled then
+        self:_createUI()
+        self:_hookNamecall()
+        DoNotif("Remote Interactor Enabled.", 2)
+    else
+        self:_unhookNamecall()
+        self:_destroyUI()
+        DoNotif("Remote Interactor Disabled.", 2)
+    end
+end
+
 function Modules.RemoteSpy:Initialize()
-    local module = self
     RegisterCommand({
-    Name = "remotespy",
-    Aliases = {"rspy"},
-    Description = "Toggles a UI to inspect and block remote events/functions."
-    }, function(args)
-    module:Toggle()
-end)
+        Name = "remotespy",
+        Aliases = {"rspy"},
+        Description = "Toggles an advanced UI to inspect, edit, and fire remotes."
+    }, function()
+        self:Toggle()
+    end)
 end
+
 Modules.Strengthen = {
 State = {
 Enabled = false,
