@@ -13100,6 +13100,93 @@ RegisterCommand({
     end
 end)
 
+Modules.InstanceInterceptor = {
+    State = {
+        IsEnabled = false,
+        OriginalNew = nil,
+        Blacklist = {
+            -- Common anti-cheat names. This list can be expanded.
+            ["Watchdog"] = true,
+            ["ClientDetector"] = true,
+            ["AntiCheat"] = true,
+            ["AC_Main"] = true,
+            ["HeartbeatChecker"] = true
+        }
+    }
+}
+
+function Modules.InstanceInterceptor:Enable(): ()
+    if self.State.IsEnabled then return end
+    if not hookfunction then
+        return DoNotif("Executor does not support hookfunction.", 4)
+    end
+
+    self.State.OriginalNew = hookfunction(Instance.new, function(self: Instance, className: string, parent: Instance)
+        -- Check the parent first. A common pattern is to name the script something innocuous
+        -- but parent it to a "Manager" or "AntiCheat" service.
+        if parent and self.State.Blacklist[parent.Name] then
+            warn("--> [InstanceInterceptor] Blocked creation of " .. className .. " due to blacklisted parent: " .. parent.Name)
+            return nil
+        end
+        
+        -- The Instance.new call is still processed to get the new object
+        local instance = self.State.OriginalNew(self, className, parent)
+        
+        -- Now we check the name of the object that was just created.
+        if instance and self.State.Blacklist[instance.Name] then
+             warn("--> [InstanceInterceptor] Blocked creation of blacklisted instance: " .. instance.Name)
+             pcall(instance.Destroy, instance) -- Destroy it immediately
+             return nil
+        end
+        
+        return instance
+    end)
+
+    self.State.IsEnabled = true
+    DoNotif("Instance Interceptor: ENABLED. Anti-Cheat creation will be blocked.", 3)
+end
+
+function Modules.InstanceInterceptor:Disable(): ()
+    if not self.State.IsEnabled then return end
+    if self.State.OriginalNew and unhookfunction then
+        unhookfunction(Instance.new)
+        self.State.OriginalNew = nil
+    end
+    self.State.IsEnabled = false
+    DoNotif("Instance Interceptor: DISABLED.", 2)
+end
+
+function Modules.InstanceInterceptor:Initialize(): ()
+    -- Enable this by default as it's a powerful passive defense
+    self:Enable()
+
+    RegisterCommand({
+        Name = "acblacklist",
+        Aliases = {"blacklist"},
+        Description = "Adds a name to the Anti-AC creation blacklist."
+    }, function(args)
+        local name = args[1]
+        if not name then return DoNotif("Usage: ;acblacklist <InstanceName>", 3) end
+        self.State.Blacklist[name] = true
+        DoNotif("Added '" .. name .. "' to instance creation blacklist.", 2)
+    end)
+
+    RegisterCommand({
+        Name = "acwhitelist",
+        Aliases = {"whitelist"},
+        Description = "Removes a name from the Anti-AC creation blacklist."
+    }, function(args)
+        local name = args[1]
+        if not name then return DoNotif("Usage: ;acwhitelist <InstanceName>", 3) end
+        if self.State.Blacklist[name] then
+            self.State.Blacklist[name] = nil
+            DoNotif("Removed '" .. name .. "' from instance creation blacklist.", 2)
+        else
+            DoNotif("'" .. name .. "' was not on the blacklist.", 2)
+        end
+    end)
+end
+
 local function loadstringCmd(url, notif)
     pcall(function()
         loadstring(game:HttpGet(url))()
