@@ -8271,76 +8271,65 @@ Modules.GamepassSpoofer = {
     }
 }
 
---// --- Public Methods ---
-
-function Modules.GamepassSpoofer:Enable()
+function Modules.GamepassSpoofer:Enable(): ()
     if self.State.IsEnabled then return end
-
-    -- This is an advanced technique; verify that the executor supports it.
-    if not (getrawmetatable and getnamecallmethod) then
-        DoNotif("Error: Your executor does not support __namecall hooking.", 5)
-        return
+    if not (getrawmetatable and getnamecallmethod and newcclosure) then
+        return DoNotif("Executor does not support __namecall hooks.", 5)
     end
 
     local gameMetatable = getrawmetatable(game)
+    if not gameMetatable then return DoNotif("Failed to acquire game metatable.", 4) end
+
     self.State.OriginalNamecall = gameMetatable.__namecall
+    local original_nc = self.State.OriginalNamecall
 
     setreadonly(gameMetatable, false)
-    
-    gameMetatable.__namecall = function(...)
-        local selfArg = ...
+    gameMetatable.__namecall = newcclosure(function(...)
+        local selfArg = select(1, ...)
         local method = getnamecallmethod()
 
         -- Intercept the specific call we want to spoof.
-        if method == "UserOwnsGamePassAsync" and typeof(selfArg) == "Instance" and selfArg:IsA("MarketplaceService") then
-            -- Lie to the calling script and tell it the user owns the gamepass.
-            -- The arguments (player, gamepassId) are ignored; we just return true.
-            print("--> [GamepassSpoofer] Intercepted and spoofed UserOwnsGamePassAsync call.")
+        if method == "UserOwnsGamePassAsync" and selfArg:IsA("MarketplaceService") then
+
+            warn("--> [GamepassSpoofer] Intercepted and spoofed UserOwnsGamePassAsync call.")
             return true
         end
 
         -- If it's not our target, pass the call to the original handler to avoid breaking the game.
-        return self.State.OriginalNamecall(...)
-    end
+        return original_nc(...)
+    end)
     
     setreadonly(gameMetatable, true)
-
     self.State.IsEnabled = true
-    DoNotif("Gamepass Spoofer: ENABLED. Client-side checks will be bypassed.", 3)
+    DoNotif("Gamepass Spoofer: ENABLED. Client-side checks will now be bypassed.", 3)
 end
 
-function Modules.GamepassSpoofer:Disable()
+function Modules.GamepassSpoofer:Disable(): ()
     if not self.State.IsEnabled then return end
-
-    -- Safely attempt to restore the original metatable method.
-    pcall(function()
-        local gameMetatable = getrawmetatable(game)
-        setreadonly(gameMetatable, false)
-        gameMetatable.__namecall = self.State.OriginalNamecall
-        setreadonly(gameMetatable, true)
-    end)
+    
+    if self.State.OriginalNamecall then
+        pcall(function()
+            local gameMetatable = getrawmetatable(game)
+            setreadonly(gameMetatable, false)
+            gameMetatable.__namecall = self.State.OriginalNamecall
+            setreadonly(gameMetatable, true)
+        end)
+    end
     
     self.State.OriginalNamecall = nil
     self.State.IsEnabled = false
     DoNotif("Gamepass Spoofer: DISABLED. Engine restored.", 2)
 end
 
-function Modules.GamepassSpoofer:Toggle()
-    if self.State.IsEnabled then
-        self:Disable()
-    else
-        self:Enable()
-    end
+function Modules.GamepassSpoofer:Initialize(): ()
+    RegisterCommand({
+        Name = "spoofgamepass",
+        Aliases = {"fakepass", "gp"},
+        Description = "Toggles a client-side gamepass spoofer to bypass local checks."
+    }, function()
+        if self.State.IsEnabled then self:Disable() else self:Enable() end
+    end)
 end
-
---// --- Command Registration ---
-RegisterCommand({
-    Name = "spoofgamepass",
-    Aliases = {"fakepass", "gp"},
-    Description = "Toggles a client-side gamepass spoofer to bypass local checks."
-}, function()
-    Modules.GamepassSpoofer:Toggle()
-end)
 
 Modules.TeleporterScanner = {
 	State = {
@@ -9930,50 +9919,40 @@ Modules.BlockRemote = {
     }
 }
 
---- Enables the __namecall hook to intercept and block remotes.
-function Modules.BlockRemote:Enable()
+function Modules.BlockRemote:Enable(): ()
     if self.State.IsEnabled then return end
-
-    -- This check is critical for ensuring the environment supports the required functions.
-    if not (getrawmetatable and getnamecallmethod) then
-        DoNotif("Error: Your executor does not support __namecall hooking.", 4)
-        return
+    if not (getrawmetatable and getnamecallmethod and newcclosure) then
+        return DoNotif("Executor does not support __namecall hooking.", 4)
     end
     
     local mt = getrawmetatable(game)
     self.State.OriginalNamecall = mt.__namecall
     
     setreadonly(mt, false)
-    mt.__namecall = function(...)
+    mt.__namecall = newcclosure(function(...)
         local args = {...}
         local selfArg = args[1]
         local method = getnamecallmethod()
-
-        -- We only care about client-to-server remote invocations.
+        
         if (selfArg:IsA("RemoteEvent") and method == "FireServer") or (selfArg:IsA("RemoteFunction") and method == "InvokeServer") then
             local remotePath = selfArg:GetFullName()
             
-            -- If the remote's path is in our block list, we "swallow" the call by returning nil.
             if self.State.BlockedRemotes[remotePath] then
                 print("--> [BlockRemote] Blocked call to:", remotePath)
                 return nil -- Discard the call.
             end
         end
-
-        -- If it's not in our block list, pass it through to the original function.
         return self.State.OriginalNamecall(...)
-    end
+    end)
     setreadonly(mt, true)
     
     self.State.IsEnabled = true
     DoNotif("Remote Blocking System: ENABLED.", 2)
 end
 
---- Disables the hook and restores the original __namecall method.
-function Modules.BlockRemote:Disable()
+function Modules.BlockRemote:Disable(): ()
     if not self.State.IsEnabled then return end
     
-    -- Safely attempt to restore the original metatable index.
     pcall(function()
         local mt = getrawmetatable(game)
         setreadonly(mt, false)
@@ -9986,22 +9965,15 @@ function Modules.BlockRemote:Disable()
     DoNotif("Remote Blocking System: DISABLED.", 2)
 end
 
---- Initializes the module and registers all associated commands.
-function Modules.BlockRemote:Initialize()
+function Modules.BlockRemote:Initialize(): ()
     local module = self
-
     RegisterCommand({
         Name = "blockremote",
         Aliases = {"br", "block"},
         Description = "Blocks a remote by its full path."
     }, function(args)
-        if not args[1] then
-            return DoNotif("Usage: ;blockremote <path.to.remote>", 3)
-        end
-        -- Automatically enable the core system if it isn't already running.
-        if not module.State.IsEnabled then
-            module:Enable()
-        end
+        if not args[1] then return DoNotif("Usage: ;blockremote <path.to.remote>", 3) end
+        if not module.State.IsEnabled then module:Enable() end
         local path = args[1]
         module.State.BlockedRemotes[path] = true
         DoNotif("Added to block list: " .. path, 2)
@@ -10012,9 +9984,7 @@ function Modules.BlockRemote:Initialize()
         Aliases = {"ubr", "unblock"},
         Description = "Unblocks a remote by its full path."
     }, function(args)
-        if not args[1] then
-            return DoNotif("Usage: ;unblockremote <path.to.remote>", 3)
-        end
+        if not args[1] then return DoNotif("Usage: ;unblockremote <path.to.remote>", 3) end
         local path = args[1]
         if module.State.BlockedRemotes[path] then
             module.State.BlockedRemotes[path] = nil
@@ -10036,27 +10006,6 @@ function Modules.BlockRemote:Initialize()
             count = count + 1
         end
         DoNotif("Printed " .. count .. " blocked remotes to the console.", 2)
-    end)
-
-    RegisterCommand({
-        Name = "clearblocked",
-        Aliases = {"clb"},
-        Description = "Clears the entire remote block list."
-    }, function()
-        table.clear(module.State.BlockedRemotes)
-        DoNotif("Remote block list has been cleared.", 2)
-    end)
-
-    RegisterCommand({
-        Name = "toggleremotehooks",
-        Aliases = {"trh"},
-        Description = "Toggles the remote hooking system on/off without clearing the block list."
-    }, function()
-        if module.State.IsEnabled then
-            module:Disable()
-        else
-            module:Enable()
-        end
     end)
 end
 
@@ -10698,8 +10647,15 @@ Modules.HeuristicRemoteBruteforcer = {
         IsScanning = false
     },
     Config = {
-        FIRE_DELAY = 0.25, -- CRITICAL: Delay in seconds between each fire call to prevent crashing/rate-limiting.
-        MAX_CALLS_PER_REMOTE = 15 -- Safety limit to prevent spamming one remote.
+        FIRE_DELAY = 0.25, 
+        MAX_CALLS_PER_REMOTE = 15,
+        -- [NEW] Blacklist of services that house internal/core remotes.
+        BlacklistedParents = {
+            game:GetService("CoreGui"),
+            game:GetService("StarterGui"),
+            game:GetService("ReplicatedFirst"),
+            game:GetService("Chat")
+        }
     },
     Services = {
         Players = game:GetService("Players"),
@@ -10714,7 +10670,6 @@ function Modules.HeuristicRemoteBruteforcer:_getHeuristicPayloads(remote: Instan
     local char = localPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
 
-    -- Base Payloads (always try these)
     table.insert(payloads, {true})
     table.insert(payloads, {false})
     table.insert(payloads, {1})
@@ -10722,20 +10677,15 @@ function Modules.HeuristicRemoteBruteforcer:_getHeuristicPayloads(remote: Instan
     table.insert(payloads, {""})
     table.insert(payloads, {nil})
     table.insert(payloads, {localPlayer})
-    
-    -- Dynamic Payload based on remote name
     table.insert(payloads, {remote.Name})
 
-    -- Position-based Payloads
     if root then
         table.insert(payloads, {root.Position})
         table.insert(payloads, {root.CFrame})
     end
 
-    -- Contextual Payloads
     if remoteName:find("buy") then
-        table.insert(payloads, {"Gems", 100})
-        table.insert(payloads, {"Sword", 0})
+        table.insert(payloads, {"Gems", 100}); table.insert(payloads, {"Sword", 0})
     end
     if remoteName:find("sell") then
         table.insert(payloads, {"Rock", 999})
@@ -10753,19 +10703,32 @@ end
 function Modules.HeuristicRemoteBruteforcer:_scanAndQueue()
     if self.State.IsScanning then return end
     self.State.IsScanning = true
-    DoNotif("Bruteforcer: Scanning for new remotes...", 2)
+    DoNotif("Bruteforcer: Scanning for new, non-core remotes...", 2)
 
     task.spawn(function()
         local remotesFound = 0
-        for _, remote in ipairs(game:GetDescendants()) do
+        local descendants = game:GetDescendants()
+        for i, remote in ipairs(descendants) do
             if (remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction")) then
                 local path = remote:GetFullName()
                 if not self.State.FiredHistory[path] then
-                    table.insert(self.State.TargetQueue, remote)
-                    self.State.FiredHistory[path] = true -- Mark as queued to prevent re-adding
-                    remotesFound = remotesFound + 1
+                    -- [CRITICAL FIX] Check if the remote is inside a blacklisted service.
+                    local isBlacklisted = false
+                    for _, parentService in ipairs(self.Config.BlacklistedParents) do
+                        if remote:IsDescendantOf(parentService) then
+                            isBlacklisted = true
+                            break
+                        end
+                    end
+
+                    if not isBlacklisted then
+                        table.insert(self.State.TargetQueue, remote)
+                        self.State.FiredHistory[path] = true
+                        remotesFound = remotesFound + 1
+                    end
                 end
             end
+            if i % 500 == 0 then task.wait() end -- Yield to prevent freezing
         end
         DoNotif(string.format("Bruteforcer: Queued %d new remotes.", remotesFound), 3)
         self.State.IsScanning = false
@@ -10777,7 +10740,7 @@ function Modules.HeuristicRemoteBruteforcer:_processQueue()
     if not self.State.IsEnabled then return end
 
     local remote = table.remove(self.State.TargetQueue, 1)
-    if not (remote and remote.Parent) then return end -- Remote was destroyed
+    if not (remote and remote.Parent) then return end
 
     print("--> [Bruteforcer] Fuzzing Remote:", remote:GetFullName())
     
@@ -10785,7 +10748,7 @@ function Modules.HeuristicRemoteBruteforcer:_processQueue()
     
     task.spawn(function()
         for i = 1, math.min(#payloads, self.Config.MAX_CALLS_PER_REMOTE) do
-            if not self.State.IsEnabled then break end -- Stop if disabled mid-fuzz
+            if not self.State.IsEnabled then break end 
             
             local payload = payloads[i]
             if remote:IsA("RemoteEvent") then
@@ -10991,7 +10954,7 @@ function Modules.AntiAnchor:Initialize()
 
     RegisterCommand({
         Name = "antianchor",
-        Aliases = {"aa"},
+        Aliases = {"aanchor"},
         Description = "Toggles a robust defense against being anchored."
     }, function()
         -- The previous logic was slightly flawed; calling self:Enable/Disable directly is cleaner.
