@@ -2586,7 +2586,7 @@ function Modules.AutoAttack:Disable()
 end
 RegisterCommand({
 Name = "autoattack",
-Aliases = {"aut", "autoclick"},
+Aliases = {"aa", "autoclick"},
 Description = "Toggles auto-click."
 }, function(args)
 local newDelay = tonumber(args[1])
@@ -9645,6 +9645,35 @@ Modules.RemoteInteractor = {
     }
 }
 
+function Modules.RemoteInteractor:_readTable(tbl: table): string
+    local function serialize(value: any, indent: number, visited: {[table]: boolean}): string
+        local valueType: string = typeof(value)
+        if visited[value] and valueType == "table" then return '"*Circular Reference*"' end
+        if valueType == "string" then return string.format("%q", value)
+        elseif valueType == "number" or valueType == "boolean" or valueType == "nil" then return tostring(value)
+        elseif valueType == "Instance" then return string.format('"%s (%s)"', value:GetFullName(), value.ClassName)
+        elseif valueType == "function" or valueType == "thread" or valueType == "userdata" then return string.format('"<%s>"', valueType)
+        elseif valueType == "table" then
+            visited[value] = true
+            local parts = {}
+            local isArray = true
+            for i = 1, #value do table.insert(parts, serialize(value[i], indent + 1, visited)) end
+            for k, v in pairs(value) do if type(k) ~= "number" or k < 1 or k > #value or k % 1 ~= 0 then isArray = false; break end end
+            if not isArray then
+                parts = {}
+                for k, v in pairs(value) do
+                    local keyStr = (typeof(k) == "string" and string.format("[%q]", k)) or string.format("[%s]", tostring(k))
+                    table.insert(parts, string.format("%s = %s", keyStr, serialize(v, indent + 1, visited)))
+                end
+            end
+            local final = "{" .. table.concat(parts, ", ") .. "}"
+            visited[value] = false
+            return final
+        else return tostring(value) end
+    end
+    return serialize(tbl, 0, {})
+end
+
 function Modules.RemoteInteractor:_destroyUI()
     if not self.State.UI then return end
     self.State.UI.ScreenGui:Destroy()
@@ -9655,113 +9684,34 @@ function Modules.RemoteInteractor:_createUI()
     self:_destroyUI()
     self.State.UI = {}
     local ui = self.State.UI
+    local Theme = { Primary = Color3.fromRGB(255, 105, 180), Background = Color3.fromRGB(34, 32, 38), Header = Color3.fromRGB(28, 26, 32), Interactive = Color3.fromRGB(45, 45, 55), Text = Color3.fromRGB(240, 240, 240) }
 
-    ui.ScreenGui = Instance.new("ScreenGui")
-    ui.ScreenGui.Name = "RemoteInteractor_Zuka"
-    ui.ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
-    ui.ScreenGui.ResetOnSpawn = false
+    ui.ScreenGui = Instance.new("ScreenGui"); ui.ScreenGui.Name = "RemoteInteractor_Zuka"; ui.ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global; ui.ScreenGui.ResetOnSpawn = false
+    
+    local mainFrame = Instance.new("Frame", ui.ScreenGui); mainFrame.Size = UDim2.fromOffset(600, 400); mainFrame.Position = UDim2.fromScale(0.5, 0.5); mainFrame.AnchorPoint = Vector2.new(0.5, 0.5); mainFrame.BackgroundColor3 = Theme.Background; mainFrame.Active = true
+    Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
+    Instance.new("UIStroke", mainFrame).Color = Theme.Primary
+    
+    local titleBar = Instance.new("Frame", mainFrame); titleBar.Size = UDim2.new(1, 0, 0, 30); titleBar.BackgroundColor3 = Theme.Header
+    local title = Instance.new("TextLabel", titleBar); title.Size = UDim2.new(1, -30, 1, 0); title.Position = UDim2.fromOffset(15,0); title.BackgroundTransparency = 1; title.Text = "Remote Interactor"; title.Font = Enum.Font.GothamSemibold; title.TextColor3 = Theme.Text; title.TextSize = 16; title.TextXAlignment = Enum.TextXAlignment.Left
+    local closeButton = Instance.new("TextButton", titleBar); closeButton.Size = UDim2.fromOffset(30, 30); closeButton.Position = UDim2.new(1, 0, 0, 0); closeButton.AnchorPoint = Vector2.new(1, 0); closeButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50); closeButton.Text = "X"; closeButton.Font = Enum.Font.GothamBold; closeButton.TextColor3 = Color3.new(1, 1, 1)
 
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.fromOffset(600, 400)
-    mainFrame.Position = UDim2.fromScale(0.5, 0.5)
-    mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(34, 32, 38)
-    mainFrame.Draggable = true
-    mainFrame.Active = true
-    mainFrame.Parent = ui.ScreenGui
-    Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 6)
-    Instance.new("UIStroke", mainFrame).Color = Color3.fromRGB(0, 255, 255)
+    local leftPanel = Instance.new("Frame", mainFrame); leftPanel.Size = UDim2.new(0.4, 0, 1, -30); leftPanel.Position = UDim2.fromOffset(0, 30); leftPanel.BackgroundTransparency = 1
+    local scanButton = Instance.new("TextButton", leftPanel); scanButton.Size = UDim2.new(1, 0, 0, 30); scanButton.BackgroundColor3 = Theme.Interactive; scanButton.Text = "Scan for Remotes"; scanButton.Font = Enum.Font.GothamBold; scanButton.TextColor3 = Color3.new(1, 1, 1); ui.ScanButton = scanButton
 
-    local title = Instance.new("TextLabel", mainFrame)
-    title.Size = UDim2.new(1, 0, 0, 30)
-    title.BackgroundColor3 = Color3.fromRGB(24, 22, 28)
-    title.Text = "Remote Interactor"
-    title.Font = Enum.Font.GothamSemibold
-    title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    title.TextSize = 16
-
-    local closeButton = Instance.new("TextButton", title)
-    closeButton.Size = UDim2.fromOffset(30, 30)
-    closeButton.Position = UDim2.new(1, 0, 0, 0)
-    closeButton.AnchorPoint = Vector2.new(1, 0)
-    closeButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-    closeButton.Text = "X"
-    closeButton.Font = Enum.Font.GothamBold
-    closeButton.TextColor3 = Color3.new(1, 1, 1)
-
-    local leftPanel = Instance.new("Frame", mainFrame)
-    leftPanel.Size = UDim2.new(0.4, 0, 1, -30)
-    leftPanel.Position = UDim2.fromOffset(0, 30)
-    leftPanel.BackgroundTransparency = 1
-
-    local scanButton = Instance.new("TextButton", leftPanel)
-    scanButton.Size = UDim2.new(1, 0, 0, 30)
-    scanButton.BackgroundColor3 = Color3.fromRGB(0, 150, 150)
-    scanButton.Text = "Scan for Remotes"
-    scanButton.Font = Enum.Font.GothamBold
-    scanButton.TextColor3 = Color3.new(1, 1, 1)
-
-    ui.RemoteList = Instance.new("ScrollingFrame", leftPanel)
-    ui.RemoteList.Size = UDim2.new(1, 0, 1, -35)
-    ui.RemoteList.Position = UDim2.fromOffset(0, 35)
-    ui.RemoteList.BackgroundColor3 = Color3.fromRGB(24, 22, 28)
-    ui.RemoteList.BorderSizePixel = 0
+    ui.RemoteList = Instance.new("ScrollingFrame", leftPanel); ui.RemoteList.Size = UDim2.new(1, 0, 1, -35); ui.RemoteList.Position = UDim2.fromOffset(0, 35); ui.RemoteList.BackgroundColor3 = Theme.Header; ui.RemoteList.BorderSizePixel = 0; ui.RemoteList.ScrollBarThickness = 4
     Instance.new("UIListLayout", ui.RemoteList).Padding = UDim.new(0, 2)
 
-    local rightPanel = Instance.new("Frame", mainFrame)
-    rightPanel.Size = UDim2.new(0.6, 0, 1, -30)
-    rightPanel.Position = UDim2.new(0.4, 0, 0, 30)
-    rightPanel.BackgroundTransparency = 1
+    local rightPanel = Instance.new("Frame", mainFrame); rightPanel.Size = UDim2.new(0.6, 0, 1, -30); rightPanel.Position = UDim2.new(0.4, 0, 0, 30); rightPanel.BackgroundTransparency = 1
     Instance.new("UIPadding", rightPanel).PaddingLeft = UDim.new(0, 10)
-
-    ui.SelectedRemoteLabel = Instance.new("TextLabel", rightPanel)
-    ui.SelectedRemoteLabel.Size = UDim2.new(1, -20, 0, 40)
-    ui.SelectedRemoteLabel.BackgroundTransparency = 1
-    ui.SelectedRemoteLabel.Font = Enum.Font.Code
-    ui.SelectedRemoteLabel.Text = "Select a remote from the list"
-    ui.SelectedRemoteLabel.TextColor3 = Color3.new(1, 1, 1)
-    ui.SelectedRemoteLabel.TextWrapped = true
-    ui.SelectedRemoteLabel.TextXAlignment = Enum.TextXAlignment.Left
-
-    ui.ArgsFrame = Instance.new("ScrollingFrame", rightPanel)
-    ui.ArgsFrame.Size = UDim2.new(1, -20, 0.4, 0)
-    ui.ArgsFrame.Position = UDim2.fromOffset(0, 40)
-    ui.ArgsFrame.BackgroundColor3 = Color3.fromRGB(24, 22, 28)
-    ui.ArgsFrame.BorderSizePixel = 0
+    ui.SelectedRemoteLabel = Instance.new("TextLabel", rightPanel); ui.SelectedRemoteLabel.Size = UDim2.new(1, -20, 0, 40); ui.SelectedRemoteLabel.BackgroundTransparency = 1; ui.SelectedRemoteLabel.Font = Enum.Font.Code; ui.SelectedRemoteLabel.Text = "Select a remote from the list"; ui.SelectedRemoteLabel.TextColor3 = Theme.Text; ui.SelectedRemoteLabel.TextWrapped = true; ui.SelectedRemoteLabel.TextXAlignment = Enum.TextXAlignment.Left
+    ui.ArgsFrame = Instance.new("ScrollingFrame", rightPanel); ui.ArgsFrame.Size = UDim2.new(1, -20, 0.4, 0); ui.ArgsFrame.Position = UDim2.fromOffset(0, 40); ui.ArgsFrame.BackgroundColor3 = Theme.Header; ui.ArgsFrame.BorderSizePixel = 0
     Instance.new("UIListLayout", ui.ArgsFrame).Padding = UDim.new(0, 5)
 
-    local addArgButton = Instance.new("TextButton", rightPanel)
-    addArgButton.Size = UDim2.new(0.5, 0, 0, 25)
-    addArgButton.Position = UDim2.new(0, 0, 0.4, 45)
-    addArgButton.BackgroundColor3 = Color3.fromRGB(80, 80, 100)
-    addArgButton.Text = "+ Add Argument"
-    addArgButton.Font = Enum.Font.Gotham
-    addArgButton.TextColor3 = Color3.new(1, 1, 1)
-
-    local fireButton = Instance.new("TextButton", rightPanel)
-    fireButton.Size = UDim2.new(0.5, -15, 0, 30)
-    fireButton.Position = UDim2.new(0, 0, 1, -75)
-    fireButton.BackgroundColor3 = Color3.fromRGB(50, 180, 50)
-    fireButton.Text = "FireServer"
-    fireButton.Font = Enum.Font.GothamBold
-    fireButton.TextColor3 = Color3.new(1, 1, 1)
-
-    local invokeButton = fireButton:Clone()
-    invokeButton.Position = UDim2.new(0.5, 5, 1, -75)
-    invokeButton.Text = "InvokeServer"
-    invokeButton.BackgroundColor3 = Color3.fromRGB(50, 100, 180)
-    invokeButton.Parent = rightPanel
-
-    ui.ResultsBox = Instance.new("TextBox", rightPanel)
-    ui.ResultsBox.MultiLine = true
-    ui.ResultsBox.TextEditable = false
-    ui.ResultsBox.Size = UDim2.new(1, -20, 0.2, 0)
-    ui.ResultsBox.Position = UDim2.new(0, 0, 1, -40)
-    ui.ResultsBox.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    ui.ResultsBox.Font = Enum.Font.Code
-    ui.ResultsBox.TextColor3 = Color3.fromRGB(0, 255, 0)
-    ui.ResultsBox.PlaceholderText = "Invoke results will appear here..."
+    local addArgButton = Instance.new("TextButton", rightPanel); addArgButton.Size = UDim2.new(0.5, 0, 0, 25); addArgButton.Position = UDim2.new(0, 0, 0.4, 45); addArgButton.BackgroundColor3 = Color3.fromRGB(80, 80, 100); addArgButton.Text = "+ Add Argument"; addArgButton.Font = Enum.Font.Gotham; addArgButton.TextColor3 = Color3.new(1, 1, 1)
+    local fireButton = Instance.new("TextButton", rightPanel); fireButton.Size = UDim2.new(0.5, -15, 0, 30); fireButton.Position = UDim2.new(0, 0, 1, -75); fireButton.BackgroundColor3 = Color3.fromRGB(50, 180, 50); fireButton.Text = "FireServer"; fireButton.Font = Enum.Font.GothamBold; fireButton.TextColor3 = Color3.new(1, 1, 1)
+    local invokeButton = fireButton:Clone(); invokeButton.Position = UDim2.new(0.5, 5, 1, -75); invokeButton.Text = "InvokeServer"; invokeButton.BackgroundColor3 = Color3.fromRGB(50, 100, 180); invokeButton.Parent = rightPanel
+    ui.ResultsBox = Instance.new("TextBox", rightPanel); ui.ResultsBox.MultiLine = true; ui.ResultsBox.TextEditable = false; ui.ResultsBox.Size = UDim2.new(1, -20, 0.2, 0); ui.ResultsBox.Position = UDim2.new(0, 0, 1, -40); ui.ResultsBox.BackgroundColor3 = Theme.Header; ui.ResultsBox.Font = Enum.Font.Code; ui.ResultsBox.TextColor3 = Theme.Primary; ui.ResultsBox.PlaceholderText = "Invoke results will appear here..."
 
     ui.ScreenGui.Parent = self.Services.CoreGui
     
@@ -9770,52 +9720,52 @@ function Modules.RemoteInteractor:_createUI()
     addArgButton.MouseButton1Click:Connect(function() self:_addArgumentInput() end)
     fireButton.MouseButton1Click:Connect(function() self:_fireRemote(false) end)
     invokeButton.MouseButton1Click:Connect(function() self:_fireRemote(true) end)
+
+    local isDragging, dragStart, startPos = false, nil, nil
+    titleBar.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDragging, dragStart, startPos = true, input.Position, mainFrame.Position end end)
+    self.Services.UserInputService.InputChanged:Connect(function(input) if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement then local delta = input.Position - dragStart; mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y) end end)
+    self.Services.UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then isDragging = false end end)
 end
 
 function Modules.RemoteInteractor:_scanRemotes()
-    for _, v in ipairs(self.State.UI.RemoteList:GetChildren()) do
-        if v:IsA("TextButton") then v:Destroy() end
-    end
-    for _, v in ipairs(game:GetDescendants()) do
-        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
-            local btn = Instance.new("TextButton")
-            btn.Size = UDim2.new(1, 0, 0, 22)
-            btn.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
-            btn.TextColor3 = Color3.new(1, 1, 1)
-            btn.Text = v.Name .. " (" .. v.ClassName .. ")"
-            btn.Font = Enum.Font.Code
-            btn.Parent = self.State.UI.RemoteList
-            btn.MouseButton1Click:Connect(function() self:_selectRemote(v) end)
+    if self.State.UI.ScanButton.Text == "Scanning..." then return end
+    self.State.UI.ScanButton.Text = "Scanning..."
+    for _, v in ipairs(self.State.UI.RemoteList:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
+    
+    task.spawn(function()
+        local descendants = game:GetDescendants()
+        for i, v in ipairs(descendants) do
+            if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+                local btn = Instance.new("TextButton")
+                btn.Size = UDim2.new(1, 0, 0, 22)
+                btn.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+                btn.TextColor3 = Color3.new(1, 1, 1)
+                btn.Text = "  " .. v.Name .. " (" .. v.ClassName .. ")"
+                btn.Font = Enum.Font.Code
+                btn.TextXAlignment = Enum.TextXAlignment.Left
+                btn.Parent = self.State.UI.RemoteList
+                btn.MouseButton1Click:Connect(function() self:_selectRemote(v) end)
+            end
+            if i % 250 == 0 then task.wait() end -- Yield every 250 instances to prevent freezing
         end
-    end
+        self.State.UI.ScanButton.Text = "Scan Complete"
+    end)
 end
 
 function Modules.RemoteInteractor:_selectRemote(remote)
     self.State.SelectedRemote = remote
     self.State.UI.SelectedRemoteLabel.Text = remote:GetFullName()
-    for _, v in ipairs(self.State.UI.ArgsFrame:GetChildren()) do
-        if v:IsA("Frame") then v:Destroy() end
-    end
+    for _, v in ipairs(self.State.UI.ArgsFrame:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
     self:_addArgumentInput()
 end
 
 function Modules.RemoteInteractor:_addArgumentInput(value)
     local row = Instance.new("Frame", self.State.UI.ArgsFrame)
-    row.Size = UDim2.new(1, 0, 0, 25)
-    row.BackgroundTransparency = 1
+    row.Size = UDim2.new(1, 0, 0, 25); row.BackgroundTransparency = 1
     local input = Instance.new("TextBox", row)
-    input.Size = UDim2.new(1, -25, 1, 0)
-    input.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-    input.TextColor3 = Color3.new(1, 1, 1)
-    input.Font = Enum.Font.Code
-    input.Text = tostring(value or "")
+    input.Size = UDim2.new(1, -25, 1, 0); input.BackgroundColor3 = Color3.fromRGB(50, 50, 60); input.TextColor3 = Color3.new(1, 1, 1); input.Font = Enum.Font.Code; input.Text = tostring(value or "")
     local delBtn = Instance.new("TextButton", row)
-    delBtn.Size = UDim2.fromOffset(20, 20)
-    delBtn.Position = UDim2.new(1, -20, 0, 2.5)
-    delBtn.BackgroundColor3 = Color3.fromRGB(150, 40, 40)
-    delBtn.Text = "X"
-    delBtn.Font = Enum.Font.Code
-    delBtn.TextColor3 = Color3.new(1, 1, 1)
+    delBtn.Size = UDim2.fromOffset(20, 20); delBtn.Position = UDim2.new(1, -20, 0, 2.5); delBtn.BackgroundColor3 = Color3.fromRGB(150, 40, 40); delBtn.Text = "X"; delBtn.Font = Enum.Font.Code; delBtn.TextColor3 = Color3.new(1, 1, 1)
     delBtn.MouseButton1Click:Connect(function() row:Destroy() end)
 end
 
@@ -9826,29 +9776,17 @@ function Modules.RemoteInteractor:_fireRemote(isInvoke)
     for _, row in ipairs(self.State.UI.ArgsFrame:GetChildren()) do
         if row:IsA("Frame") then
             local input = row:FindFirstChildOfClass("TextBox")
-            local text = input.Text
-            if tonumber(text) then
-                table.insert(args, tonumber(text))
-            elseif text:lower() == "true" then
-                table.insert(args, true)
-            elseif text:lower() == "false" then
-                table.insert(args, false)
-            elseif text:lower() == "nil" then
-                table.insert(args, nil)
-            else
-                table.insert(args, text)
-            end
+            local success, result = pcall(function() return loadstring("return " .. input.Text)() end)
+            if success then table.insert(args, result) else table.insert(args, input.Text) end
         end
     end
     
     if isInvoke then
+        if not self.State.SelectedRemote:IsA("RemoteFunction") then self.State.UI.ResultsBox.Text = "Error: Cannot invoke a RemoteEvent."; return end
         local success, result = pcall(self.State.SelectedRemote.InvokeServer, self.State.SelectedRemote, unpack(args))
-        if success then
-            self.State.UI.ResultsBox.Text = "SUCCESS: " .. tostring(result)
-        else
-            self.State.UI.ResultsBox.Text = "ERROR: " .. tostring(result)
-        end
+        if success then self.State.UI.ResultsBox.Text = "SUCCESS: " .. self:_readTable({result}):sub(2,-2) else self.State.UI.ResultsBox.Text = "ERROR: " .. tostring(result) end
     else
+        if not self.State.SelectedRemote:IsA("RemoteEvent") then self.State.UI.ResultsBox.Text = "Error: Cannot fire a RemoteFunction."; return end
         pcall(self.State.SelectedRemote.FireServer, self.State.SelectedRemote, unpack(args))
         self.State.UI.ResultsBox.Text = "Fired remote event. (No return value)"
     end
@@ -9859,18 +9797,16 @@ function Modules.RemoteInteractor:_setupNamecallHook()
     local mt = getrawmetatable(game)
     self.State.OriginalNamecall = mt.__namecall
     setreadonly(mt, false)
-    mt.__namecall = function(...)
-        local method = getnamecallmethod()
+    mt.__namecall = newcclosure(function(...)
         local selfArg = select(1, ...)
-        if self.State.SelectedRemote and selfArg == self.State.SelectedRemote and (method == "FireServer" or method == "InvokeServer") then
+        local method = getnamecallmethod()
+        if self.State.IsEnabled and self.State.SelectedRemote and selfArg == self.State.SelectedRemote and (method == "FireServer" or method == "InvokeServer") then
             for _, v in ipairs(self.State.UI.ArgsFrame:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
             local args = {...}
-            for i = 2, #args do
-                self:_addArgumentInput(args[i])
-            end
+            for i = 2, #args do self:_addArgumentInput(args[i]) end
         end
         return self.State.OriginalNamecall(...)
-    end
+    end)
     setreadonly(mt, true)
 end
 
@@ -9902,7 +9838,7 @@ function Modules.RemoteInteractor:Initialize()
         Aliases = {"remspy", "remotehub"},
         Description = "Opens a powerful UI to scan, spy on, and fire any remote in the game."
     }, function()
-        Modules.RemoteInteractor:Toggle()
+        self:Toggle()
     end)
 end
 
@@ -10753,7 +10689,160 @@ function Modules.RemoteSpy:Initialize()
     end)
 end
 
+Modules.HeuristicRemoteBruteforcer = {
+    State = {
+        IsEnabled = false,
+        Connection = nil,
+        TargetQueue = {},
+        FiredHistory = {},
+        IsScanning = false
+    },
+    Config = {
+        FIRE_DELAY = 0.25, -- CRITICAL: Delay in seconds between each fire call to prevent crashing/rate-limiting.
+        MAX_CALLS_PER_REMOTE = 15 -- Safety limit to prevent spamming one remote.
+    },
+    Services = {
+        Players = game:GetService("Players"),
+        RunService = game:GetService("RunService")
+    }
+}
 
+function Modules.HeuristicRemoteBruteforcer:_getHeuristicPayloads(remote: Instance)
+    local payloads = {}
+    local remoteName = remote.Name:lower()
+    local localPlayer = self.Services.Players.LocalPlayer
+    local char = localPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+
+    -- Base Payloads (always try these)
+    table.insert(payloads, {true})
+    table.insert(payloads, {false})
+    table.insert(payloads, {1})
+    table.insert(payloads, {0})
+    table.insert(payloads, {""})
+    table.insert(payloads, {nil})
+    table.insert(payloads, {localPlayer})
+    
+    -- Dynamic Payload based on remote name
+    table.insert(payloads, {remote.Name})
+
+    -- Position-based Payloads
+    if root then
+        table.insert(payloads, {root.Position})
+        table.insert(payloads, {root.CFrame})
+    end
+
+    -- Contextual Payloads
+    if remoteName:find("buy") then
+        table.insert(payloads, {"Gems", 100})
+        table.insert(payloads, {"Sword", 0})
+    end
+    if remoteName:find("sell") then
+        table.insert(payloads, {"Rock", 999})
+    end
+    if remoteName:find("equip") then
+        table.insert(payloads, {"Sword"})
+    end
+     if remoteName:find("teleport") or remoteName:find("tp") then
+        table.insert(payloads, {Vector3.new(0, 100, 0)})
+    end
+
+    return payloads
+end
+
+function Modules.HeuristicRemoteBruteforcer:_scanAndQueue()
+    if self.State.IsScanning then return end
+    self.State.IsScanning = true
+    DoNotif("Bruteforcer: Scanning for new remotes...", 2)
+
+    task.spawn(function()
+        local remotesFound = 0
+        for _, remote in ipairs(game:GetDescendants()) do
+            if (remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction")) then
+                local path = remote:GetFullName()
+                if not self.State.FiredHistory[path] then
+                    table.insert(self.State.TargetQueue, remote)
+                    self.State.FiredHistory[path] = true -- Mark as queued to prevent re-adding
+                    remotesFound = remotesFound + 1
+                end
+            end
+        end
+        DoNotif(string.format("Bruteforcer: Queued %d new remotes.", remotesFound), 3)
+        self.State.IsScanning = false
+    end)
+end
+
+function Modules.HeuristicRemoteBruteforcer:_processQueue()
+    if #self.State.TargetQueue == 0 then return end
+    if not self.State.IsEnabled then return end
+
+    local remote = table.remove(self.State.TargetQueue, 1)
+    if not (remote and remote.Parent) then return end -- Remote was destroyed
+
+    print("--> [Bruteforcer] Fuzzing Remote:", remote:GetFullName())
+    
+    local payloads = self:_getHeuristicPayloads(remote)
+    
+    task.spawn(function()
+        for i = 1, math.min(#payloads, self.Config.MAX_CALLS_PER_REMOTE) do
+            if not self.State.IsEnabled then break end -- Stop if disabled mid-fuzz
+            
+            local payload = payloads[i]
+            if remote:IsA("RemoteEvent") then
+                pcall(remote.FireServer, remote, unpack(payload))
+            elseif remote:IsA("RemoteFunction") then
+                local success, result = pcall(remote.InvokeServer, remote, unpack(payload))
+                if success then
+                    print("    - Invoke SUCCESS. Result:", result)
+                end
+            end
+            task.wait(self.Config.FIRE_DELAY)
+        end
+    end)
+end
+
+function Modules.HeuristicRemoteBruteforcer:Enable(): ()
+    if self.State.IsEnabled then return end
+    self.State.IsEnabled = true
+    
+    self:_scanAndQueue()
+
+    self.State.Connection = self.Services.RunService.Heartbeat:Connect(function()
+        self:_processQueue()
+    end)
+    DoNotif("Heuristic Bruteforcer: ENABLED", 2)
+end
+
+function Modules.HeuristicRemoteBruteforcer:Disable(): ()
+    if not self.State.IsEnabled then return end
+    self.State.IsEnabled = false
+    
+    if self.State.Connection then
+        self.State.Connection:Disconnect()
+        self.State.Connection = nil
+    end
+    
+    self.State.TargetQueue = {}
+    DoNotif("Heuristic Bruteforcer: DISABLED. Queue cleared.", 2)
+end
+
+function Modules.HeuristicRemoteBruteforcer:Initialize(): ()
+    RegisterCommand({
+        Name = "autofire",
+        Aliases = {"bruteforce", "fuzz"},
+        Description = "Toggles the heuristic remote bruteforcer to find insecure remotes."
+    }, function()
+        if self.State.IsEnabled then self:Disable() else self:Enable() end
+    end)
+
+    RegisterCommand({
+        Name = "clearfiredhistory",
+        Description = "Clears the history of fired remotes, allowing a new scan."
+    }, function()
+        self.State.FiredHistory = {}
+        DoNotif("Bruteforcer history cleared. You can now scan again.", 2)
+    end)
+end
 
 
 Modules.Strengthen = {
