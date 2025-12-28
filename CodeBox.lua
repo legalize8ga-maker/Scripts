@@ -1,7 +1,3 @@
--- Credits to DEX EXPLORER script for syntax highlight!
--- Made by @cherry_peashooter on discord
-
--- Themes: Galaxy (its default); VSCode; RobloxStudio; Light; Monokai; Retro; Dracula; GitHub; Nord; Electro
 
 local themes = table.freeze({
 	["Galaxy"] = table.freeze({
